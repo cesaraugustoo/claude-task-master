@@ -23,7 +23,8 @@ import {
 	toKebabCase
 } from './utils.js';
 import {
-	parsePRD,
+	// parsePRD, // Removed
+	parseDocumentAndGenerateTasks, // Added
 	updateTasks,
 	generateTaskFiles,
 	setTaskStatus,
@@ -64,6 +65,7 @@ import {
 	isApiKeySet,
 	getDebugFlag,
 	getConfig,
+	getDocumentSources, // Added
 	writeConfig,
 	ConfigurationError,
 	isConfigFilePresent,
@@ -73,7 +75,7 @@ import {
 
 import {
 	COMPLEXITY_REPORT_FILE,
-	PRD_FILE,
+	// PRD_FILE, // No longer the primary default
 	TASKMASTER_TASKS_FILE,
 	TASKMASTER_CONFIG_FILE
 } from '../../src/constants/paths.js';
@@ -669,38 +671,43 @@ function registerCommands(programInstance) {
 		process.exit(1);
 	});
 
-	// parse-prd command
+	// parse-document command (renamed from parse-prd)
 	programInstance
-		.command('parse-prd')
-		.description('Parse a PRD file and generate tasks')
-		.argument('[file]', 'Path to the PRD file')
+		.command('parse-document')
+		.description('Parse a configured document source by its ID and generate tasks.')
 		.option(
-			'-i, --input <file>',
-			'Path to the PRD file (alternative to positional argument)'
+			'-d, --document-id <id>',
+			'ID of the document source to parse (from .taskmaster/config.json)'
 		)
-		.option('-o, --output <file>', 'Output file path', TASKMASTER_TASKS_FILE)
-		.option('-n, --num-tasks <number>', 'Number of tasks to generate', '10')
-		.option('-f, --force', 'Skip confirmation when overwriting existing tasks')
+		.option('-o, --output <file>', 'Output file path for tasks.json', TASKMASTER_TASKS_FILE)
+		.option('-n, --num-tasks <number>', 'Approximate number of tasks to generate', '10')
+		.option('-f, --force', 'Skip confirmation when overwriting existing tasks in the target tag')
 		.option(
 			'--append',
-			'Append new tasks to existing tasks.json instead of overwriting'
+			'Append new tasks to existing tasks in the target tag instead of overwriting'
 		)
 		.option(
 			'-r, --research',
-			'Use Perplexity AI for research-backed task generation, providing more comprehensive and accurate task breakdown'
+			'Use the research model for potentially more informed task generation'
 		)
-		.option('--tag <tag>', 'Specify tag context for task operations')
-		.action(async (file, options) => {
-			// Use input option if file argument not provided
-			const inputFile = file || options.input;
-			const defaultPrdPath = PRD_FILE;
-			const numTasks = parseInt(options.numTasks, 10);
-			const outputPath = options.output;
-			const force = options.force || false;
-			const append = options.append || false;
-			const research = options.research || false;
-			let useForce = force;
-			const useAppend = append;
+		.option('--tag <tag>', 'Specify tag context for task operations (influences output and overwrite checks)')
+		.action(async (options) => { // file argument removed
+			const {
+				documentId,
+				output: outputOption,
+				numTasks: numTasksOption,
+				force: forceOption,
+				append: appendOption,
+				research: researchOption,
+				tag: tagOption
+			} = options;
+
+			const numTasks = parseInt(numTasksOption, 10);
+			const outputPath = outputOption; // TASKMASTER_TASKS_FILE is default via option
+			const force = forceOption || false;
+			const append = appendOption || false;
+			const research = researchOption || false;
+			let useForce = force; // To be potentially modified by confirmOverwriteIfNeeded
 
 			const projectRoot = findProjectRoot();
 			if (!projectRoot) {
@@ -709,44 +716,65 @@ function registerCommands(programInstance) {
 			}
 
 			// Resolve tag using standard pattern
-			const tag = options.tag || getCurrentTag(projectRoot) || 'master';
+			const tag = tagOption || getCurrentTag(projectRoot) || 'master';
 
 			// Show current tag context
 			displayCurrentTagIndicator(tag);
 
+			if (!documentId) {
+				console.error(chalk.red('Error: --document-id <id> is required.'));
+				programInstance.commands.find(c => c.name() === 'parse-document').help();
+				process.exit(1);
+			}
+
+			// Load document sources from config
+			let docSource;
+			try {
+				getConfig(projectRoot); // Ensure config is loaded
+				const sources = getDocumentSources(projectRoot);
+				docSource = sources.find(s => s.id === documentId);
+			} catch (configError) {
+				console.error(chalk.red(`Error loading configuration: ${configError.message}`));
+				process.exit(1);
+			}
+
+			if (!docSource) {
+				console.error(chalk.red(`Error: Document source with ID '${documentId}' not found in configuration.`));
+				console.log(chalk.yellow(`Please check your .taskmaster/config.json file for available 'documentSources'.`));
+				process.exit(1);
+			}
+
+			const currentDocumentPath = path.isAbsolute(docSource.path)
+				? docSource.path
+				: path.resolve(projectRoot, docSource.path);
+			const currentDocumentType = docSource.type;
+
+			if (!fs.existsSync(currentDocumentPath)) {
+				console.error(chalk.red(`Error: Document file not found at path: ${currentDocumentPath} (for ID: ${documentId})`));
+				process.exit(1);
+			}
+
 			// Helper function to check if there are existing tasks in the target tag and confirm overwrite
 			async function confirmOverwriteIfNeeded() {
-				// Check if there are existing tasks in the target tag
 				let hasExistingTasksInTag = false;
 				if (fs.existsSync(outputPath)) {
 					try {
-						// Read the entire file to check if the tag exists
 						const existingFileContent = fs.readFileSync(outputPath, 'utf8');
 						const allData = JSON.parse(existingFileContent);
-
-						// Check if the target tag exists and has tasks
-						if (
-							allData[tag] &&
-							Array.isArray(allData[tag].tasks) &&
-							allData[tag].tasks.length > 0
-						) {
+						if (allData[tag] && Array.isArray(allData[tag].tasks) && allData[tag].tasks.length > 0) {
 							hasExistingTasksInTag = true;
 						}
 					} catch (error) {
-						// If we can't read the file or parse it, assume no existing tasks in this tag
 						hasExistingTasksInTag = false;
 					}
 				}
 
-				// Only show confirmation if there are existing tasks in the target tag
-				if (hasExistingTasksInTag && !useForce && !useAppend) {
-					const overwrite = await confirmTaskOverwrite(outputPath);
+				if (hasExistingTasksInTag && !useForce && !append) {
+					const overwrite = await confirmTaskOverwrite(outputPath, `tag '${tag}'`);
 					if (!overwrite) {
 						log('info', 'Operation cancelled.');
 						return false;
 					}
-					// If user confirms 'y', we should set useForce = true for the parsePRD call
-					// Only overwrite if not appending
 					useForce = true;
 				}
 				return true;
@@ -755,76 +783,38 @@ function registerCommands(programInstance) {
 			let spinner;
 
 			try {
-				if (!inputFile) {
-					if (fs.existsSync(defaultPrdPath)) {
-						console.log(
-							chalk.blue(`Using default PRD file path: ${defaultPrdPath}`)
-						);
-						if (!(await confirmOverwriteIfNeeded())) return;
-
-						console.log(chalk.blue(`Generating ${numTasks} tasks...`));
-						spinner = ora('Parsing PRD and generating tasks...\n').start();
-						await parsePRD(defaultPrdPath, outputPath, numTasks, {
-							append: useAppend, // Changed key from useAppend to append
-							force: useForce, // Changed key from useForce to force
-							research: research,
-							projectRoot: projectRoot,
-							tag: tag
-						});
-						spinner.succeed('Tasks generated successfully!');
-						return;
-					}
-
-					console.log(
-						chalk.yellow(
-							`No PRD file specified and default PRD file not found at ${PRD_FILE}.`
-						)
-					);
-					console.log(
-						boxen(
-							`${chalk.white.bold('Parse PRD Help')}\n\n${chalk.cyan('Usage:')}\n  task-master parse-prd <prd-file.txt> [options]\n\n${chalk.cyan('Options:')}\n  -i, --input <file>       Path to the PRD file (alternative to positional argument)\n  -o, --output <file>      Output file path (default: "${TASKMASTER_TASKS_FILE}")\n  -n, --num-tasks <number> Number of tasks to generate (default: 10)\n  -f, --force              Skip confirmation when overwriting existing tasks\n  --append                 Append new tasks to existing tasks.json instead of overwriting\n  -r, --research           Use Perplexity AI for research-backed task generation\n\n${chalk.cyan('Example:')}\n  task-master parse-prd requirements.txt --num-tasks 15\n  task-master parse-prd --input=requirements.txt\n  task-master parse-prd --force\n  task-master parse-prd requirements_v2.txt --append\n  task-master parse-prd requirements.txt --research\n\n${chalk.yellow('Note: This command will:')}\n  1. Look for a PRD file at ${PRD_FILE} by default\n  2. Use the file specified by --input or positional argument if provided\n  3. Generate tasks from the PRD and either:\n     - Overwrite any existing tasks.json file (default)\n     - Append to existing tasks.json if --append is used`,
-							{ padding: 1, borderColor: 'blue', borderStyle: 'round' }
-						)
-					);
-					return;
-				}
-
-				if (!fs.existsSync(inputFile)) {
-					console.error(
-						chalk.red(`Error: Input PRD file not found: ${inputFile}`)
-					);
-					process.exit(1);
-				}
-
 				if (!(await confirmOverwriteIfNeeded())) return;
 
-				console.log(chalk.blue(`Parsing PRD file: ${inputFile}`));
-				console.log(chalk.blue(`Generating ${numTasks} tasks...`));
+				console.log(chalk.blue(`Parsing document ID: ${documentId} (Type: ${currentDocumentType}, Path: ${currentDocumentPath})`));
+				console.log(chalk.blue(`Generating approximately ${numTasks} tasks...`));
 				if (append) {
-					console.log(chalk.blue('Appending to existing tasks...'));
+					console.log(chalk.blue('Appending to existing tasks in tag...'));
 				}
 				if (research) {
-					console.log(
-						chalk.blue(
-							'Using Perplexity AI for research-backed task generation'
-						)
-					);
+					console.log(chalk.blue('Using research model for task generation...'));
 				}
 
-				spinner = ora('Parsing PRD and generating tasks...\n').start();
-				await parsePRD(inputFile, outputPath, numTasks, {
-					append: useAppend,
-					force: useForce,
-					research: research,
-					projectRoot: projectRoot,
-					tag: tag
-				});
-				spinner.succeed('Tasks generated successfully!');
+				spinner = ora(`Parsing document (ID: ${documentId}) and generating tasks...\n`).start();
+				await parseDocumentAndGenerateTasks(
+					currentDocumentPath,
+					documentId,
+					currentDocumentType,
+					outputPath,
+					numTasks,
+					{
+						append: append,
+						force: useForce, // useForce after potential confirmation
+						research: research,
+						projectRoot: projectRoot,
+						tag: tag
+					}
+				);
+				spinner.succeed(`Tasks generated successfully from document ID '${documentId}'!`);
 			} catch (error) {
 				if (spinner) {
-					spinner.fail(`Error parsing PRD: ${error.message}`);
+					spinner.fail(`Error parsing document (ID: ${documentId}): ${error.message}`);
 				} else {
-					console.error(chalk.red(`Error parsing PRD: ${error.message}`));
+					console.error(chalk.red(`Error parsing document (ID: ${documentId}): ${error.message}`));
 				}
 				process.exit(1);
 			}
