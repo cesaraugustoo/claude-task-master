@@ -212,6 +212,16 @@ Each task within a tag context contains the following properties:
   "status": "pending"
   ```
 
+- **`sourceDocumentId`** (string): The ID of the source document (from `documentSources` in config) from which this task was generated.
+  ```json
+  "sourceDocumentId": "product_level_prd"
+  ```
+
+- **`sourceDocumentType`** (string): The type of the source document (e.g., "PRODUCT_PRD", "FEATURE_PRD") from which this task was generated.
+  ```json
+  "sourceDocumentType": "PRODUCT_PRD"
+  ```
+
 ### Optional Properties
 
 - **`dependencies`** (array): IDs of prerequisite tasks that must be completed first
@@ -280,6 +290,21 @@ Subtasks follow a similar structure to main tasks but with some differences:
   "details": "Parse callback parameters, exchange code for token, fetch user profile"
 }
 ```
+
+## Hierarchical Document Task Generation
+
+When using the `process-docs` command, Task Master can generate tasks from a hierarchy of documents (e.g., Product PRD -> Feature PRDs -> Design Specs) as defined in the `documentSources` array in `.taskmaster/config.json`.
+
+Key aspects of tasks generated this way:
+
+- **Source Attribution**: Each task includes `sourceDocumentId` and `sourceDocumentType` fields, indicating which configured document it originated from. This allows you to trace tasks back to their specific requirements document.
+- **Unified Task List per Tag**: All tasks generated from the entire document hierarchy (for a single `process-docs` run) are stored under the *same tag* in `tasks.json`.
+- **Sequential IDs within Tag**: Task IDs are unique and sequential within that tag, regardless of which source document they came from. For example, if a Product PRD generates tasks 1-5, and a linked Feature PRD generates tasks 6-10, they will all reside in the same list under the target tag.
+- **Inter-Document Dependencies**: Tasks generated from a child document (e.g., a Feature PRD) can (and often should) depend on tasks generated from its parent document (e.g., the Product PRD). These dependencies are represented using the standard `dependencies` array with task IDs. Since all tasks are in the same list under the tag, these cross-document dependencies resolve correctly.
+    - Example: A task with ID `8` (from a Feature PRD) might have `"dependencies": [3]` where task `3` was generated from the parent Product PRD.
+- **Contextual AI Prompts**: During hierarchical processing, information about relevant parent tasks is provided to the AI when it processes a child document. This helps the AI generate more relevant tasks and establish meaningful dependencies.
+
+This approach ensures that even complex projects with multiple layers of documentation can be broken down into a single, manageable, and interconnected list of tasks within a specific tag context.
 
 ## Complete Example
 

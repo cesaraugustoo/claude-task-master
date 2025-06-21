@@ -66,102 +66,86 @@ const prdResponseSchema = z.object({
  */
 async function parseDocumentAndGenerateTasks(documentPath, documentId, documentType, tasksPath, numTasks, options = {}) {
 	const {
-		reportProgress,
+		// reportProgress, // Not directly used, can be removed if not planned for future
 		mcpLog,
 		session,
 		projectRoot,
-		force = false,
-		append = false,
+		force = false, // When true, current tag's tasks are overwritten by this document's tasks
+		append = false, // When true, tasks from this document are added to existing tasks in the tag
 		research = false,
-		tag
+		tag,
+		parentTasksContext = [], // New: Tasks from parent document
+		currentTaskStartId = 1  // New: Starting ID for tasks from this document
 	} = options;
-	const isMCP = !!mcpLog;
-	const outputFormat = isMCP ? 'json' : 'text';
 
-	// Use the provided tag, or the current active tag, or default to 'master'
+	const isMCP = !!mcpLog;
+	const outputFormat = isMCP ? 'json' : 'text'; // Retained for potential CLI direct call
+
 	const targetTag = tag || getCurrentTag(projectRoot) || 'master';
 
-	const logFn = mcpLog
-		? mcpLog
-		: {
-				// Wrapper for CLI
-				info: (...args) => log('info', ...args),
-				warn: (...args) => log('warn', ...args),
-				error: (...args) => log('error', ...args),
-				debug: (...args) => log('debug', ...args),
-				success: (...args) => log('success', ...args)
-			};
+	const logFn = mcpLog || {
+		info: (...args) => log('info', ...args),
+		warn: (...args) => log('warn', ...args),
+		error: (...args) => log('error', ...args),
+		debug: (...args) => log('debug', ...args),
+		success: (...args) => log('success', ...args),
+	};
 
-	// Create custom reporter using logFn
 	const report = (message, level = 'info') => {
-		// Check logFn directly
 		if (logFn && typeof logFn[level] === 'function') {
 			logFn[level](message);
 		} else if (!isSilentMode() && outputFormat === 'text') {
-			// Fallback to original log only if necessary and in CLI text mode
 			log(level, message);
 		}
 	};
 
 	report(
-		`Parsing document: ${documentPath} (Type: ${documentType}, ID: ${documentId}), Force: ${force}, Append: ${append}, Research: ${research}`
+		`Parsing document: ${documentPath} (DocID: ${documentId}, Type: ${documentType}) for Tag: '${targetTag}'. StartID: ${currentTaskStartId}, Force: ${force}, Append: ${append}, Research: ${research}, ParentTasks: ${parentTasksContext.length}`,
+		'info'
 	);
 
-	let existingTasks = [];
-	let nextId = 1;
+	let existingTasksInTag = []; // Tasks already in tasks.json for the targetTag
+	let nextIdForThisDocument = currentTaskStartId; // AI will be instructed to use IDs from this number
 	let aiServiceResponse = null;
 
 	try {
-		// Check if there are existing tasks in the target tag
-		let hasExistingTasksInTag = false;
+		// Load existing tasks for the targetTag if tasks.json exists
 		if (fs.existsSync(tasksPath)) {
 			try {
-				// Read the entire file to check if the tag exists
-				const existingFileContent = fs.readFileSync(tasksPath, 'utf8');
-				const allData = JSON.parse(existingFileContent);
-
-				// Check if the target tag exists and has tasks
-				if (
-					allData[targetTag] &&
-					Array.isArray(allData[targetTag].tasks) &&
-					allData[targetTag].tasks.length > 0
-				) {
-					hasExistingTasksInTag = true;
-					existingTasks = allData[targetTag].tasks;
-					nextId = Math.max(...existingTasks.map((t) => t.id || 0)) + 1;
+				const allData = readJSON(tasksPath) || {}; // Ensure readJSON handles empty/invalid JSON gracefully
+				if (allData[targetTag] && Array.isArray(allData[targetTag].tasks)) {
+					existingTasksInTag = allData[targetTag].tasks;
+					if (!force && !append && existingTasksInTag.length > 0) {
+						// This case should ideally be caught by the orchestrator.
+						// If called directly and tasks exist without force/append, it's an issue.
+						const directCallError = new Error(
+							`Tag '${targetTag}' already contains ${existingTasksInTag.length} tasks. Use --force to overwrite or --append. (parseDocumentAndGenerateTasks)`
+						);
+						report(directCallError.message, 'error');
+						if (outputFormat === 'text') {
+							console.error(chalk.red(directCallError.message));
+							process.exit(1); // Exit if called directly from CLI in a conflicting way
+						}
+						throw directCallError; // Throw for programmatic use
+					}
+					if (append) {
+						// If appending, nextIdForThisDocument should still be currentTaskStartId,
+						// as determined by the orchestrator. existingTasksInTag is just for context and final merge.
+						report(`Append mode: ${existingTasksInTag.length} tasks already in tag '${targetTag}'. New tasks will start from ID ${nextIdForThisDocument}.`, 'info');
+					}
 				}
 			} catch (error) {
-				// If we can't read the file or parse it, assume no existing tasks in this tag
-				hasExistingTasksInTag = false;
+				report(`Error reading or parsing existing tasks from ${tasksPath} for tag '${targetTag}': ${error.message}. Proceeding as if tag is empty or will be overwritten.`, 'warn');
+				existingTasksInTag = []; // Reset on error to be safe
 			}
 		}
 
-		// Handle file existence and overwrite/append logic based on target tag
-		if (hasExistingTasksInTag) {
-			if (append) {
-				report(
-					`Append mode enabled. Found ${existingTasks.length} existing tasks in tag '${targetTag}'. Next ID will be ${nextId}.`,
-					'info'
-				);
-			} else if (!force) {
-				// Not appending and not forcing overwrite, and there are existing tasks in the target tag
-				const overwriteError = new Error(
-					`Tag '${targetTag}' already contains ${existingTasks.length} tasks. Use --force to overwrite or --append to add to existing tasks.`
-				);
-				report(overwriteError.message, 'error');
-				if (outputFormat === 'text') {
-					console.error(chalk.red(overwriteError.message));
-					process.exit(1);
-				} else {
-					throw overwriteError;
-				}
-			} else {
-				// Force overwrite is true
-				report(
-					`Force flag enabled. Overwriting existing tasks in tag '${targetTag}'.`,
-					'info'
-				);
-			}
+		if (force) {
+			report(`Force mode: Tag '${targetTag}' will be overwritten with tasks from this document. ${existingTasksInTag.length} existing tasks will be replaced.`, 'info');
+			existingTasksInTag = []; // Effectively start fresh for this tag for this document processing.
+			// nextIdForThisDocument is already currentTaskStartId, which should be 1 if orchestrator handles force correctly.
+		}
+		// Stray '}' was here, removed. The 'else' below correctly pairs with 'if (fs.existsSync(tasksPath))'
 		} else {
 			// No existing tasks in target tag, proceed without confirmation
 			report(
@@ -176,256 +160,235 @@ async function parseDocumentAndGenerateTasks(documentPath, documentId, documentT
 			throw new Error(`Input file ${documentPath} is empty or could not be read.`);
 		}
 
-		// Research-specific enhancements to the system prompt
+		report(`Reading content from ${documentPath}`, 'info');
+		const documentContent = fs.readFileSync(documentPath, 'utf8');
+		if (!documentContent) {
+			throw new Error(`Input file ${documentPath} is empty or could not be read.`);
+		}
+
+		let parentContextInfo = '';
+		if (parentTasksContext && parentTasksContext.length > 0) {
+			parentContextInfo = `
+This document (type: ${documentType}, ID: ${documentId}) is a child of a preceding document. Tasks generated from this document may depend on the following tasks from its parent context:
+${parentTasksContext.map(pt => `- ID: ${pt.id}, Title: ${pt.title}, Description: ${pt.description.substring(0,100)}... (from parent doc: ${pt.sourceDocumentId})`).join('\n')}
+When defining dependencies for the new tasks you generate below, you can reference these parent task IDs.
+Ensure that any dependencies on these parent tasks are valid (i.e., the parent task ID exists in this list).`;
+		}
+
 		const researchPromptAddition = research
 			? `\nBefore breaking down the document into tasks, you will:
 1. Research and analyze the latest technologies, libraries, frameworks, and best practices that would be appropriate for this project based on the document.
-2. Identify any potential technical challenges, security concerns, or scalability issues not explicitly mentioned in the document without discarding any explicit requirements or going overboard with complexity -- always aim to provide the most direct path to implementation, avoiding over-engineering or roundabout approaches
-3. Consider current industry standards and evolving trends relevant to this project (this step aims to solve LLM hallucinations and out of date information due to training data cutoff dates).
-4. Evaluate alternative implementation approaches and recommend the most efficient path.
-5. Include specific library versions, helpful APIs, and concrete implementation guidance based on your research.
-6. Always aim to provide the most direct path to implementation, avoiding over-engineering or roundabout approaches.
-
-Your task breakdown should incorporate this research, resulting in more detailed implementation guidance, more accurate dependency mapping, and more precise technology recommendations than would be possible from the document text alone, while maintaining all explicit requirements and best practices and all details and nuances of the document.`
+2. Identify any potential technical challenges, security concerns, or scalability issues not explicitly mentioned in the document.
+3. Consider current industry standards and evolving trends relevant to this project.
+Your task breakdown should incorporate this research, resulting in more detailed implementation guidance and technology recommendations.`
 			: '';
 
-		// Base system prompt for document parsing
-		const systemPrompt = `You are an AI assistant specialized in analyzing documents (such as ${documentType}) and generating a structured, logically ordered, dependency-aware and sequenced list of development tasks in JSON format.${researchPromptAddition}
+		const systemPrompt = `You are an AI assistant specialized in analyzing documents (such as ${documentType}) and generating a structured, logically ordered, dependency-aware list of development tasks in JSON format.${researchPromptAddition}
+${parentContextInfo}
 
-Analyze the provided document content and generate approximately ${numTasks} top-level development tasks. If the complexity or the level of detail of the document is high, generate more tasks relative to the complexity of the document.
-Each task should represent a logical unit of work needed to implement the requirements and focus on the most direct and effective way to implement the requirements without unnecessary complexity or overengineering. Include pseudo-code, implementation details, and test strategy for each task. Find the most up to date information to implement each task.
-Assign sequential IDs starting from ${nextId}. Infer title, description, details, and test strategy for each task based on the document content.
-Set status to 'pending', dependencies to an empty array [], and priority to 'medium' initially for all tasks.
-For each task, YOU MUST include "sourceDocumentId": "placeholder_id" and "sourceDocumentType": "placeholder_type". These will be replaced later.
-Respond ONLY with a valid JSON object containing a single key "tasks", where the value is an array of task objects adhering to the provided Zod schema. Do not include any explanation or markdown formatting.
+Analyze the provided document content and generate approximately ${numTasks} top-level development tasks.
+Each task should represent a logical unit of work. Include implementation details and a test strategy for each task.
+Assign sequential IDs to the tasks you generate, starting from ${nextIdForThisDocument}.
+For each task, YOU MUST include "sourceDocumentId": "${documentId}" and "sourceDocumentType": "${documentType}".
+Set status to 'pending', and priority to 'medium' initially.
+Dependencies can be on other tasks you generate (with IDs >= ${nextIdForThisDocument}) or on tasks from the parent context (IDs < ${nextIdForThisDocument}, listed above if provided).
 
-Each task should follow this JSON structure:
+Respond ONLY with a valid JSON object containing a single key "tasks", where the value is an array of task objects. Each task object must adhere to this Zod schema:
 {
-	"id": number,
+	"id": number, // Starting from ${nextIdForThisDocument}
 	"title": string,
 	"description": string,
-	"sourceDocumentId": "placeholder_id",
-	"sourceDocumentType": "placeholder_type",
+	"sourceDocumentId": "${documentId}", // Fixed for this document
+	"sourceDocumentType": "${documentType}", // Fixed for this document
 	"status": "pending",
-	"dependencies": number[] (IDs of tasks this depends on),
+	"dependencies": number[], // IDs of tasks this depends on (can be parent tasks or tasks from this doc)
 	"priority": "high" | "medium" | "low",
-	"details": string (implementation details),
-	"testStrategy": string (validation approach)
+	"details": string,
+	"testStrategy": string
 }
 
 Guidelines:
-1. Unless complexity warrants otherwise, create exactly ${numTasks} tasks, numbered sequentially starting from ${nextId}.
-2. Each task should be atomic and focused on a single responsibility following the most up to date best practices and standards.
-3. Order tasks logically - consider dependencies and implementation sequence.
-4. Early tasks should focus on setup, core functionality first, then advanced features.
-5. Include clear validation/testing approach for each task.
-6. Set appropriate dependency IDs (a task can only depend on tasks with lower IDs, potentially including existing tasks with IDs less than ${nextId} if applicable).
-7. Assign priority (high/medium/low) based on criticality and dependency order.
-8. Include detailed implementation guidance in the "details" field${research ? ', with specific libraries and version recommendations based on your research' : ''}.
-9. If the document contains specific requirements for libraries, database schemas, frameworks, tech stacks, or any other implementation details, STRICTLY ADHERE to these requirements in your task breakdown and do not discard them under any circumstance.
-10. Focus on filling in any gaps left by the document or areas that aren't fully specified, while preserving all explicit requirements.
-11. Always aim to provide the most direct path to implementation, avoiding over-engineering or roundabout approaches.${research ? '\n12. For each task, include specific, actionable guidance based on current industry standards and best practices discovered through research.' : ''}`;
+1. Create approximately ${numTasks} tasks, numbered sequentially starting from ID ${nextIdForThisDocument}.
+2. Ensure logical order and appropriate dependencies, including potential dependencies on parent tasks listed in the context.
+3. Adhere strictly to any specific requirements (libraries, tech stacks) mentioned in the document.
+4. Focus on providing a direct path to implementation, avoiding over-engineering.
+5. If parent tasks are provided, make sure any specified dependencies on them are valid.
+Example of a task depending on a parent task (ID 5) and a new task (ID ${nextIdForThisDocument + 1}): "dependencies": [5, ${nextIdForThisDocument + 1}]`;
 
-		// Build user prompt with document content
-		const userPrompt = `Here's the document (Type: ${documentType}) to break down into approximately ${numTasks} tasks, starting IDs from ${nextId}:${research ? '\n\nRemember to thoroughly research current best practices and technologies before task breakdown to provide specific, actionable implementation details.' : ''}\n\n${documentContent}\n\n
-
-		Return your response in this format:
+		const userPrompt = `Document content (Type: ${documentType}, ID: ${documentId}):\n\n${documentContent}\n\n
+Generate tasks based on this document, starting task IDs from ${nextIdForThisDocument}.
+${parentTasksContext.length > 0 ? 'Remember to consider the parent tasks provided in the system prompt for context and potential dependencies.' : ''}
+Return your response in the specified JSON format:
 {
     "tasks": [
         {
-            "id": 1,
-            "title": "Setup Project Repository",
+            "id": ${nextIdForThisDocument},
+            "title": "Example Task Title",
             "description": "...",
-            "sourceDocumentId": "placeholder_id",
-            "sourceDocumentType": "placeholder_type",
-            ...
-        },
-        ...
+            "sourceDocumentId": "${documentId}",
+            "sourceDocumentType": "${documentType}",
+            "status": "pending",
+            "dependencies": [],
+            "priority": "medium",
+            "details": "...",
+            "testStrategy": "..."
+        }
+        // ... more tasks
     ],
-    "metadata": {
-        "projectName": "Document Implementation",
-        "totalTasks": ${numTasks},
-        "sourceFile": "${documentPath}",
-        "generatedAt": "YYYY-MM-DD"
+    "metadata": { // This metadata block is for your internal use if needed, but the final output must be just the tasks array under "tasks" key as per schema.
+        "projectName": "Document Implementation", // Example, not strictly part of Zod schema for tasks list
+        "totalTasks": ${numTasks}, // Example
+        "sourceFile": "${documentPath}", // Example
+        "generatedAt": "YYYY-MM-DD" // Example
     }
 }`;
-
-		// Call the unified AI service
 		report(
-			`Calling AI service to generate tasks from document (${documentType})${research ? ' with research-backed analysis' : ''}...`,
+			`Calling AI service to generate tasks for document ${documentId} (type ${documentType}), starting ID ${nextIdForThisDocument}${research ? ' with research' : ''}...`,
 			'info'
 		);
 
-		// Call generateObjectService with the CORRECT schema and additional telemetry params
 		aiServiceResponse = await generateObjectService({
-			role: research ? 'research' : 'main', // Use research role if flag is set
+			role: research ? 'research' : 'main',
 			session: session,
 			projectRoot: projectRoot,
-			schema: prdResponseSchema, // This schema already expects sourceDocumentId and sourceDocumentType
+			schema: prdResponseSchema, // Zod schema for the expected { tasks: [], metadata: {} } structure
 			objectName: 'tasks_data',
 			systemPrompt: systemPrompt,
 			prompt: userPrompt,
-			commandName: 'parse-document', // Updated command name
+			commandName: 'parse-document-hierarchical',
 			outputType: isMCP ? 'mcp' : 'cli'
 		});
 
-		// Create the directory if it doesn't exist
 		const tasksDir = path.dirname(tasksPath);
 		if (!fs.existsSync(tasksDir)) {
 			fs.mkdirSync(tasksDir, { recursive: true });
 		}
 		logFn.success(
-			`Successfully parsed document (${documentType}) via AI service${research ? ' with research-backed analysis' : ''}.`
+			`AI service call successful for document ${documentId}. Processing generated tasks...`
 		);
 
-		// Validate and Process Tasks
-		// const generatedData = aiServiceResponse?.mainResult?.object;
-
-		// Robustly get the actual AI-generated object
 		let generatedData = null;
 		if (aiServiceResponse?.mainResult) {
-			if (
-				typeof aiServiceResponse.mainResult === 'object' &&
-				aiServiceResponse.mainResult !== null &&
-				'tasks' in aiServiceResponse.mainResult
-			) {
-				// If mainResult itself is the object with a 'tasks' property
+			if (typeof aiServiceResponse.mainResult === 'object' && aiServiceResponse.mainResult !== null && 'tasks' in aiServiceResponse.mainResult) {
 				generatedData = aiServiceResponse.mainResult;
-			} else if (
-				typeof aiServiceResponse.mainResult.object === 'object' &&
-				aiServiceResponse.mainResult.object !== null &&
-				'tasks' in aiServiceResponse.mainResult.object
-			) {
-				// If mainResult.object is the object with a 'tasks' property
+			} else if (typeof aiServiceResponse.mainResult.object === 'object' &&	aiServiceResponse.mainResult.object !== null && 'tasks' in aiServiceResponse.mainResult.object) {
 				generatedData = aiServiceResponse.mainResult.object;
 			}
 		}
 
 		if (!generatedData || !Array.isArray(generatedData.tasks)) {
-			logFn.error(
-				`Internal Error: AI service returned unexpected data structure: ${JSON.stringify(generatedData)}`
-			);
-			throw new Error(
-				'AI service returned unexpected data structure after validation by generateObjectService.'
-			);
+			logFn.error(`AI service returned unexpected data structure for doc ${documentId}: ${JSON.stringify(generatedData)}`);
+			throw new Error('AI service returned unexpected data structure after validation by generateObjectService.');
 		}
 
-		// Inject actual sourceDocumentId and sourceDocumentType, replacing placeholders
-		if (generatedData && Array.isArray(generatedData.tasks)) {
-			generatedData.tasks.forEach(task => {
-				task.sourceDocumentId = documentId; // Actual documentId from function params
-				task.sourceDocumentType = documentType; // Actual documentType from function params
-			});
-		}
+		// Ensure sourceDocumentId and sourceDocumentType are correctly set from function params, overriding AI.
+		// Also, AI might not correctly start IDs, so we remap them.
+		let currentIdForRemapping = nextIdForThisDocument;
+		const taskAiIdToNewIdMap = new Map();
 
-
-		let currentId = nextId;
-		const taskMap = new Map();
 		const processedNewTasks = generatedData.tasks.map((task) => {
-			const newId = currentId++;
-			taskMap.set(task.id, newId); // task.id is the original ID from AI before we overwrite it
+			const originalAiTaskId = task.id; // ID assigned by AI
+			const newSequentialId = currentIdForRemapping++;
+			taskAiIdToNewIdMap.set(originalAiTaskId, newSequentialId);
+
 			return {
-				...task, // This now includes the CORRECT sourceDocumentId and sourceDocumentType
-				id: newId,
-				status: 'pending',
+				...task,
+				id: newSequentialId, // Enforce sequential ID starting from nextIdForThisDocument
+				sourceDocumentId: documentId, // Enforce correct source document ID
+				sourceDocumentType: documentType, // Enforce correct source document type
+				status: task.status || 'pending',
 				priority: task.priority || 'medium',
 				dependencies: Array.isArray(task.dependencies) ? task.dependencies : [],
-				subtasks: []
+				subtasks: [] // Initialize subtasks
 			};
 		});
 
 		// Remap dependencies for the NEWLY processed tasks
+		// Dependencies can be:
+		// 1. To other new tasks (remapped from AI ID to newSequentialId)
+		// 2. To parent tasks (original IDs from parentTasksContext, should be < nextIdForThisDocument)
+		// 3. To existing tasks in the tag (original IDs from existingTasksInTag, should be < nextIdForThisDocument)
 		processedNewTasks.forEach((task) => {
-			task.dependencies = task.dependencies
-				.map((depId) => taskMap.get(depId)) // Map old AI ID to new sequential ID
-				.filter(
-					(newDepId) =>
-						newDepId != null && // Must exist
-						newDepId < task.id && // Must be a lower ID (could be existing or newly generated)
-						(findTaskById(existingTasks, newDepId) || // Check if it exists in old tasks OR
-							processedNewTasks.some((t) => t.id === newDepId)) // check if it exists in new tasks
-				);
+			task.dependencies = (task.dependencies || [])
+				.map(depId => {
+					// If depId was an AI-assigned ID for a task in *this* batch, remap it.
+					if (taskAiIdToNewIdMap.has(depId)) {
+						return taskAiIdToNewIdMap.get(depId);
+					}
+					// Otherwise, assume it's an ID from parent context or existing tasks.
+					return depId;
+				})
+				.filter(depId => {
+					if (depId == null) return false;
+					// Check if dependency is valid:
+					// Is it one of the parent tasks?
+					const isParentTask = parentTasksContext.some(pt => pt.id === depId);
+					// Is it one of the existing tasks in the tag (and not a future ID from this batch)?
+					const isExistingTask = existingTasksInTag.some(et => et.id === depId);
+					// Is it another new task from this document (must have a lower ID)?
+					const isNewSiblingTask = processedNewTasks.some(nt => nt.id === depId && nt.id < task.id);
+
+					const isValid = isParentTask || isExistingTask || isNewSiblingTask;
+					if (!isValid) {
+						logFn.warn(`Task ${task.id} ('${task.title}') from doc ${documentId} has an invalid dependency ID: ${depId}. This dependency will be removed.`);
+					}
+					return isValid;
+				});
 		});
 
-		const finalTasks = append
-			? [...existingTasks, ...processedNewTasks]
-			: processedNewTasks;
+		// Combine tasks:
+		// If 'force' was true, existingTasksInTag is already empty.
+		// 'finalTasksForTag' will contain the tasks for the current tag after this document's processing.
+		const finalTasksForTag = append ? [...existingTasksInTag, ...processedNewTasks] :
+		                       (force ? processedNewTasks : [...existingTasksInTag, ...processedNewTasks]);
 
-		// Read the existing file to preserve other tags
-		let outputData = {};
+
+		let allTagsData = {};
 		if (fs.existsSync(tasksPath)) {
 			try {
-				const existingFileContent = fs.readFileSync(tasksPath, 'utf8');
-				outputData = JSON.parse(existingFileContent);
+				allTagsData = readJSON(tasksPath) || {};
 			} catch (error) {
-				// If we can't read the existing file, start with empty object
-				outputData = {};
+				report(`Could not read existing tasks.json to preserve other tags: ${error.message}. Other tags might be lost if this is the first write.`, 'warn');
+				allTagsData = {};
 			}
 		}
 
-		// Update only the target tag, preserving other tags
-		outputData[targetTag] = {
-			tasks: finalTasks,
+		allTagsData[targetTag] = {
+			tasks: finalTasksForTag,
 			metadata: {
-				created:
-					outputData[targetTag]?.metadata?.created || new Date().toISOString(),
+				created: allTagsData[targetTag]?.metadata?.created || new Date().toISOString(),
 				updated: new Date().toISOString(),
 				description: `Tasks for ${targetTag} context`
 			}
 		};
+		ensureTagMetadata(allTagsData[targetTag], { description: `Tasks for ${targetTag} context` });
 
-		// Ensure the target tag has proper metadata
-		ensureTagMetadata(outputData[targetTag], {
-			description: `Tasks for ${targetTag} context`
-		});
-
-		// Write the complete data structure back to the file
-		fs.writeFileSync(tasksPath, JSON.stringify(outputData, null, 2));
+		fs.writeFileSync(tasksPath, JSON.stringify(allTagsData, null, 2));
 		report(
-			`Successfully ${append ? 'appended' : 'generated'} ${processedNewTasks.length} tasks in ${tasksPath}${research ? ' with research-backed analysis' : ''}`,
+			`Successfully ${force ? 'overwritten' : (append ? 'appended' : 'updated')} ${processedNewTasks.length} tasks for document ${documentId} in tag '${targetTag}'. Total tasks in tag: ${finalTasksForTag.length}.`,
 			'success'
 		);
 
-		// Generate markdown task files after writing tasks.json
-		// await generateTaskFiles(tasksPath, path.dirname(tasksPath), { mcpLog });
-
-		// Handle CLI output (e.g., success message)
-		if (outputFormat === 'text') {
+		if (outputFormat === 'text' && !isMCP) { // Only for direct CLI calls
 			console.log(
 				boxen(
 					chalk.green(
-						`Successfully generated ${processedNewTasks.length} new tasks${research ? ' with research-backed analysis' : ''}. Total tasks in ${tasksPath}: ${finalTasks.length}`
+						`Generated ${processedNewTasks.length} new tasks for doc ${documentId}. Total in tag '${targetTag}': ${finalTasksForTag.length}`
 					),
 					{ padding: 1, borderColor: 'green', borderStyle: 'round' }
 				)
 			);
-
-			console.log(
-				boxen(
-					chalk.white.bold('Next Steps:') +
-						'\n\n' +
-						`${chalk.cyan('1.')} Run ${chalk.yellow('task-master list')} to view all tasks\n` +
-						`${chalk.cyan('2.')} Run ${chalk.yellow('task-master expand --id=<id>')} to break down a task into subtasks`,
-					{
-						padding: 1,
-						borderColor: 'cyan',
-						borderStyle: 'round',
-						margin: { top: 1 }
-					}
-				)
-			);
-
 			if (aiServiceResponse && aiServiceResponse.telemetryData) {
 				displayAiUsageSummary(aiServiceResponse.telemetryData, 'cli');
 			}
 		}
 
-		// Return telemetry data
 		return {
 			success: true,
-			tasksPath,
+			generatedTasks: processedNewTasks, // Only tasks generated from THIS document
+			nextTaskId: currentIdForRemapping, // The next available ID for the subsequent document or run
 			telemetryData: aiServiceResponse?.telemetryData,
-			tagInfo: aiServiceResponse?.tagInfo
+			tagInfo: aiServiceResponse?.tagInfo // If your AI service provides this
 		};
 	} catch (error) {
 		report(`Error parsing document (${documentType}): ${error.message}`, 'error');
