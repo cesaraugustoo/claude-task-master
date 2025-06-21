@@ -63,7 +63,8 @@ const DEFAULTS = {
 		projectName: 'Task Master',
 		ollamaBaseURL: 'http://localhost:11434/api',
 		bedrockBaseURL: 'https://bedrock.us-east-1.amazonaws.com'
-	}
+	},
+	documentSources: []
 };
 
 // --- Internal Config Loading ---
@@ -126,6 +127,12 @@ function _loadAndValidateConfig(explicitRoot = null) {
 				},
 				global: { ...defaults.global, ...parsedConfig?.global }
 			};
+			// Add documentSources handling
+			if (parsedConfig?.documentSources !== undefined) {
+				config.documentSources = parsedConfig.documentSources;
+			} else {
+				config.documentSources = defaults.documentSources;
+			}
 			configSource = `file (${configPath})`; // Update source info
 
 			// Issue deprecation warning if using legacy config file
@@ -199,6 +206,16 @@ function _loadAndValidateConfig(explicitRoot = null) {
 	}
 
 	return config;
+}
+
+/**
+ * Gets the document sources configuration.
+ * @param {string|null} explicitRoot - Optional explicit path to the project root.
+ * @returns {Array} The document sources array, or an empty array if not found.
+ */
+function getDocumentSources(explicitRoot = null) {
+	const config = getConfig(explicitRoot);
+	return config?.documentSources || [];
 }
 
 /**
@@ -794,5 +811,6 @@ export {
 	// ADD: Function to get all provider names
 	getAllProviders,
 	getVertexProjectId,
-	getVertexLocation
+	getVertexLocation,
+	getDocumentSources
 };

@@ -30,5 +30,27 @@
 		"bedrockBaseURL": "https://bedrock.us-east-1.amazonaws.com",
 		"azureBaseURL": "https://your-endpoint.azure.com/",
 		"defaultTag": "master"
-	}
+	},
+	"documentSources": [
+		{
+			"id": "product_level_prd",
+			"type": "PRODUCT_PRD",
+			"path": ".taskmaster/docs/prd.txt",
+			"parserConfig": {}
+		},
+		{
+			"id": "feature_auth_prd",
+			"type": "FEATURE_PRD",
+			"path": "docs/features/authentication_feature.md",
+			"parentId": "product_level_prd",
+			"parserConfig": {}
+		},
+		{
+			"id": "core_arch_sdd",
+			"type": "SYSTEM_DESIGN_DOC",
+			"path": "docs/architecture/core_sdd.md",
+			"parentId": "product_level_prd",
+			"parserConfig": {}
+		}
+	]
 }

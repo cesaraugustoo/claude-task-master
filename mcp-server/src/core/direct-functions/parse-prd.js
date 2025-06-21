@@ -5,30 +5,34 @@
 
 import path from 'path';
 import fs from 'fs';
-import { parsePRD } from '../../../../scripts/modules/task-manager.js';
+import { parseDocumentAndGenerateTasks } from '../../../../scripts/modules/task-manager.js';
 import {
 	enableSilentMode,
 	disableSilentMode,
 	isSilentMode
 } from '../../../../scripts/modules/utils.js';
 import { createLogWrapper } from '../../tools/utils.js';
-import { getDefaultNumTasks } from '../../../../scripts/modules/config-manager.js';
-import { resolvePrdPath, resolveProjectPath } from '../utils/path-utils.js';
+import {
+	getDefaultNumTasks,
+	getDocumentSources,
+	getConfig
+} from '../../../../scripts/modules/config-manager.js';
+import { resolveProjectPath } from '../utils/path-utils.js'; // resolvePrdPath removed
 import { TASKMASTER_TASKS_FILE } from '../../../../src/constants/paths.js';
 
 /**
- * Direct function wrapper for parsing PRD documents and generating tasks.
+ * Direct function wrapper for parsing documents and generating tasks.
  *
- * @param {Object} args - Command arguments containing projectRoot, input, output, numTasks options.
+ * @param {Object} args - Command arguments containing projectRoot, documentId, output, numTasks options.
  * @param {Object} log - Logger object.
  * @param {Object} context - Context object containing session data.
  * @returns {Promise<Object>} - Result object with success status and data/error information.
  */
-export async function parsePRDDirect(args, log, context = {}) {
+export async function parseDocumentDirect(args, log, context = {}) {
 	const { session } = context;
 	// Extract projectRoot from args
 	const {
-		input: inputArg,
+		documentId, // Changed from input
 		output: outputArg,
 		numTasks: numTasksArg,
 		force,
@@ -42,7 +46,7 @@ export async function parsePRDDirect(args, log, context = {}) {
 
 	// --- Input Validation and Path Resolution ---
 	if (!projectRoot) {
-		logWrapper.error('parsePRDDirect requires a projectRoot argument.');
+		logWrapper.error('parseDocumentDirect requires a projectRoot argument.');
 		return {
 			success: false,
 			error: {
@@ -52,25 +56,35 @@ export async function parsePRDDirect(args, log, context = {}) {
 		};
 	}
 
-	// Resolve input path using path utilities
-	let inputPath;
-	if (inputArg) {
-		try {
-			inputPath = resolvePrdPath({ input: inputArg, projectRoot }, session);
-		} catch (error) {
-			logWrapper.error(`Error resolving PRD path: ${error.message}`);
-			return {
-				success: false,
-				error: { code: 'FILE_NOT_FOUND', message: error.message }
-			};
-		}
-	} else {
-		logWrapper.error('parsePRDDirect called without input path');
+	if (!documentId) {
+		logWrapper.error('parseDocumentDirect called without documentId');
 		return {
 			success: false,
-			error: { code: 'MISSING_ARGUMENT', message: 'Input path is required' }
+			error: { code: 'MISSING_ARGUMENT', message: 'documentId is required.' }
 		};
 	}
+
+	// Load configuration and document sources
+	getConfig(projectRoot); // Ensure config is loaded for getDocumentSources
+	const documentSources = getDocumentSources(projectRoot);
+	const documentSource = documentSources.find(ds => ds.id === documentId);
+
+	if (!documentSource) {
+		logWrapper.error(`Document source with ID '${documentId}' not found in configuration.`);
+		return {
+			success: false,
+			error: {
+				code: 'DOCUMENT_NOT_FOUND',
+				message: `Document source with ID '${documentId}' not found in configuration.`
+			}
+		};
+	}
+
+	const documentPath = path.isAbsolute(documentSource.path)
+		? documentSource.path
+		: path.resolve(projectRoot, documentSource.path);
+	const documentType = documentSource.type;
+
 
 	// Resolve output path - use new path utilities for default
 	const outputPath = outputArg
@@ -80,9 +94,9 @@ export async function parsePRDDirect(args, log, context = {}) {
 		: resolveProjectPath(TASKMASTER_TASKS_FILE, args) ||
 			path.resolve(projectRoot, TASKMASTER_TASKS_FILE);
 
-	// Check if input file exists
-	if (!fs.existsSync(inputPath)) {
-		const errorMsg = `Input PRD file not found at resolved path: ${inputPath}`;
+	// Check if document file exists
+	if (!fs.existsSync(documentPath)) {
+		const errorMsg = `Input document file not found at resolved path: ${documentPath}`;
 		logWrapper.error(errorMsg);
 		return {
 			success: false,
@@ -134,7 +148,7 @@ export async function parsePRDDirect(args, log, context = {}) {
 	}
 
 	logWrapper.info(
-		`Parsing PRD via direct function. Input: ${inputPath}, Output: ${outputPath}, NumTasks: ${numTasks}, Force: ${force}, Append: ${append}, Research: ${research}, ProjectRoot: ${projectRoot}`
+		`Parsing document via direct function. Document ID: ${documentId}, Type: ${documentType}, Path: ${documentPath}, Output: ${outputPath}, NumTasks: ${numTasks}, Force: ${force}, Append: ${append}, Research: ${research}, ProjectRoot: ${projectRoot}`
 	);
 
 	const wasSilent = isSilentMode();
@@ -143,9 +157,11 @@ export async function parsePRDDirect(args, log, context = {}) {
 	}
 
 	try {
-		// Call the core parsePRD function
-		const result = await parsePRD(
-			inputPath,
+		// Call the core parseDocumentAndGenerateTasks function
+		const result = await parseDocumentAndGenerateTasks(
+			documentPath,
+			documentId,
+			documentType,
 			outputPath,
 			numTasks,
 			{
@@ -155,7 +171,7 @@ export async function parsePRDDirect(args, log, context = {}) {
 				force,
 				append,
 				research,
-				commandName: 'parse-prd',
+				commandName: 'parse-document', // Updated command name
 				outputType: 'mcp'
 			},
 			'json'
@@ -163,7 +179,7 @@ export async function parsePRDDirect(args, log, context = {}) {
 
 		// Adjust check for the new return structure
 		if (result && result.success) {
-			const successMsg = `Successfully parsed PRD and generated tasks in ${result.tasksPath}`;
+			const successMsg = `Successfully parsed document and generated tasks in ${result.tasksPath}`;
 			logWrapper.success(successMsg);
 			return {
 				success: true,
@@ -177,7 +193,7 @@ export async function parsePRDDirect(args, log, context = {}) {
 		} else {
 			// Handle case where core function didn't return expected success structure
 			logWrapper.error(
-				'Core parsePRD function did not return a successful structure.'
+				'Core parseDocumentAndGenerateTasks function did not return a successful structure.'
 			);
 			return {
 				success: false,
@@ -185,17 +201,17 @@ export async function parsePRDDirect(args, log, context = {}) {
 					code: 'CORE_FUNCTION_ERROR',
 					message:
 						result?.message ||
-						'Core function failed to parse PRD or returned unexpected result.'
+						'Core function failed to parse document or returned unexpected result.'
 				}
 			};
 		}
 	} catch (error) {
-		logWrapper.error(`Error executing core parsePRD: ${error.message}`);
+		logWrapper.error(`Error executing core parseDocumentAndGenerateTasks: ${error.message}`);
 		return {
 			success: false,
 			error: {
-				code: 'PARSE_PRD_CORE_ERROR',
-				message: error.message || 'Unknown error parsing PRD'
+				code: 'PARSE_DOCUMENT_CORE_ERROR',
+				message: error.message || 'Unknown error parsing document'
 			}
 		};
 	} finally {

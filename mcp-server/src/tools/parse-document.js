@@ -9,27 +9,26 @@ import {
 	withNormalizedProjectRoot,
 	createErrorResponse
 } from './utils.js';
-import { parsePRDDirect } from '../core/task-master-core.js';
+import { parseDocumentDirect } from '../core/task-master-core.js';
 import {
-	PRD_FILE,
-	TASKMASTER_DOCS_DIR,
+	TASKMASTER_DOCS_DIR, // No longer used for default input, but might be in descriptions
 	TASKMASTER_TASKS_FILE
 } from '../../../src/constants/paths.js';
 
 /**
- * Register the parse_prd tool
+ * Register the parse_document tool
  * @param {Object} server - FastMCP server instance
  */
-export function registerParsePRDTool(server) {
+export function registerParseDocumentTool(server) {
 	server.addTool({
-		name: 'parse_prd',
-		description: `Parse a Product Requirements Document (PRD) text file to automatically generate initial tasks. Reinitializing the project is not necessary to run this tool. It is recommended to run parse-prd after initializing the project and creating/importing a prd.txt file in the project root's ${TASKMASTER_DOCS_DIR} directory.`,
+		name: 'parse_document',
+		description: `Parses a pre-configured document source using its ID to generate tasks. Uses details from the 'documentSources' array in the .taskmaster/config.json file.`,
 		parameters: z.object({
-			input: z
+			documentId: z
 				.string()
-				.optional()
-				.default(PRD_FILE)
-				.describe('Absolute path to the PRD document file (.txt, .md, etc.)'),
+				.describe(
+					'The ID of the document source (from documentSources in .taskmaster/config.json) to parse.'
+				),
 			projectRoot: z
 				.string()
 				.describe('The directory of the project. Must be an absolute path.'),
@@ -63,17 +62,20 @@ export function registerParsePRDTool(server) {
 		}),
 		execute: withNormalizedProjectRoot(async (args, { log, session }) => {
 			try {
-				const result = await parsePRDDirect(args, log, { session });
+				// Args already contains documentId, projectRoot, etc. as defined in parameters
+				const result = await parseDocumentDirect(args, log, { session });
 				return handleApiResult(
 					result,
 					log,
-					'Error parsing PRD',
+					'Error parsing document', // Updated error message prefix
 					undefined,
 					args.projectRoot
 				);
 			} catch (error) {
-				log.error(`Error in parse_prd: ${error.message}`);
-				return createErrorResponse(`Failed to parse PRD: ${error.message}`);
+				log.error(`Error in parse_document: ${error.message}`); // Updated tool name in log
+				return createErrorResponse(
+					`Failed to parse document: ${error.message}`
+				); // Updated error message
 			}
 		})
 	});
