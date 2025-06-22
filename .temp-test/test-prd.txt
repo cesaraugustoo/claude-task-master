@@ -1,0 +1,23 @@
+
+# Test Product Requirements Document
+
+## Overview  
+Build a simple task management application.
+
+## Core Features
+- Create and edit tasks
+- Mark tasks as complete
+- Filter tasks by status
+- Basic user authentication
+
+## Technical Stack
+- React frontend
+- Node.js/Express backend
+- MongoDB database
+- JWT authentication
+
+## Requirements
+- Responsive design
+- Real-time updates
+- User accounts and profiles
+- Task categories and tags

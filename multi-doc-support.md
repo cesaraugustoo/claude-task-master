@@ -33,7 +33,8 @@ Each task includes: ID, title, dependencies (✅), and LLM-assistance potential.
 
 ---
 
-#### 🔜 1.3 Adapter Loader Integration
+#### ✅ 1.3 Adapter Loader Integration
+- **Status:** ✅ Done
 - **Description:** Modify `parseDocumentAndGenerateTasks` to:
   - Load adapter based on `documentType`
   - Use it to customize LLM prompts and task post-processing

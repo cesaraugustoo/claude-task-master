@@ -4,7 +4,7 @@
  */
 
 import { findTaskById } from './utils.js';
-import parsePRD from './task-manager/parse-prd.js';
+import parseDocumentAndGenerateTasks from './task-manager/parse-prd.js';
 import updateTasks from './task-manager/update-tasks.js';
 import updateTaskById from './task-manager/update-task-by-id.js';
 import generateTaskFiles from './task-manager/generate-task-files.js';
@@ -27,9 +27,10 @@ import moveTask from './task-manager/move-task.js';
 import { migrateProject } from './task-manager/migrate.js';
 import { performResearch } from './task-manager/research.js';
 import { readComplexityReport } from './utils.js';
+import processDocumentHierarchy from './task-manager/process-document-hierarchy.js';
 // Export task manager functions
 export {
-	parsePRD,
+	parseDocumentAndGenerateTasks,
 	updateTasks,
 	updateTaskById,
 	updateSubtaskById,
@@ -52,5 +53,6 @@ export {
 	moveTask,
 	readComplexityReport,
 	migrateProject,
-	performResearch
+	performResearch,
+	processDocumentHierarchy
 };

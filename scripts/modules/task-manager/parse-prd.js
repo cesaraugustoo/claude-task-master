@@ -21,6 +21,8 @@ import { getDebugFlag } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import { displayAiUsageSummary } from '../ui.js';
 import { getTaskSchema, getPrdResponseSchema } from './schemas/task-schema.js';
+// Import the document adapter system
+import { getAdapter, estimateTaskCount as adapterEstimateTaskCount, postProcessTasks as adapterPostProcessTasks } from './document-adapters/index.js';
 
 // Use centralized schemas
 const prdSingleTaskSchema = getTaskSchema();
@@ -88,6 +90,16 @@ async function parseDocumentAndGenerateTasks(documentPath, documentId, documentT
 	let nextIdForThisDocument = currentTaskStartId; // AI will be instructed to use IDs from this number
 	let aiServiceResponse = null;
 
+	// Load the appropriate document adapter
+	let documentAdapter;
+	try {
+		documentAdapter = getAdapter(documentType);
+		report(`Using document adapter for type: ${documentType}`, 'debug');
+	} catch (error) {
+		report(`Error loading adapter for document type '${documentType}': ${error.message}. Using fallback adapter.`, 'warn');
+		documentAdapter = getAdapter('UNKNOWN'); // This will get the fallback adapter
+	}
+
 	try {
 		// Load existing tasks for the targetTag if tasks.json exists
 		if (fs.existsSync(tasksPath)) {
@@ -138,6 +150,22 @@ async function parseDocumentAndGenerateTasks(documentPath, documentId, documentT
 			throw new Error(`Input file ${documentPath} is empty or could not be read.`);
 		}
 
+		// Use adapter to estimate task count if not provided or get enhanced task count
+		let effectiveNumTasks = numTasks;
+		if (documentAdapter.estimateTaskCount) {
+			try {
+				const adapterEstimate = documentAdapter.estimateTaskCount(documentContent);
+				if (!numTasks || numTasks <= 0) {
+					effectiveNumTasks = adapterEstimate;
+					report(`Using adapter's task count estimate: ${effectiveNumTasks}`, 'info');
+				} else {
+					report(`Adapter suggests ${adapterEstimate} tasks, using provided ${numTasks}`, 'debug');
+				}
+			} catch (error) {
+				report(`Error in adapter task estimation: ${error.message}. Using provided count: ${effectiveNumTasks}`, 'warn');
+			}
+		}
+
 		let parentContextInfo = '';
 		if (parentTasksContext && parentTasksContext.length > 0) {
 			parentContextInfo = `
@@ -155,10 +183,24 @@ Ensure that any dependencies on these parent tasks are valid (i.e., the parent t
 Your task breakdown should incorporate this research, resulting in more detailed implementation guidance and technology recommendations.`
 			: '';
 
+		// Get document-type specific prompt from adapter
+		let adapterPrePrompt = '';
+		if (documentAdapter.getPrePrompt) {
+			try {
+				adapterPrePrompt = documentAdapter.getPrePrompt(documentContent);
+				report(`Using adapter-specific prompt customization`, 'debug');
+			} catch (error) {
+				report(`Error getting adapter pre-prompt: ${error.message}. Using base prompt.`, 'warn');
+				adapterPrePrompt = '';
+			}
+		}
+
 		const systemPrompt = `You are an AI assistant specialized in analyzing documents (such as ${documentType}) and generating a structured, logically ordered, dependency-aware list of development tasks in JSON format.${researchPromptAddition}
 ${parentContextInfo}
 
-Analyze the provided document content and generate approximately ${numTasks} top-level development tasks.
+${adapterPrePrompt}
+
+Analyze the provided document content and generate approximately ${effectiveNumTasks} top-level development tasks.
 Each task should represent a logical unit of work. Include implementation details and a test strategy for each task.
 Assign sequential IDs to the tasks you generate, starting from ${nextIdForThisDocument}.
 For each task, YOU MUST include "sourceDocumentId": "${documentId}" and "sourceDocumentType": "${documentType}".
@@ -180,7 +222,7 @@ Respond ONLY with a valid JSON object containing a single key "tasks", where the
 }
 
 Guidelines:
-1. Create approximately ${numTasks} tasks, numbered sequentially starting from ID ${nextIdForThisDocument}.
+1. Create approximately ${effectiveNumTasks} tasks, numbered sequentially starting from ID ${nextIdForThisDocument}.
 2. Ensure logical order and appropriate dependencies, including potential dependencies on parent tasks listed in the context.
 3. Adhere strictly to any specific requirements (libraries, tech stacks) mentioned in the document.
 4. Focus on providing a direct path to implementation, avoiding over-engineering.
@@ -209,7 +251,7 @@ Return your response in the specified JSON format:
     ],
     "metadata": { // This metadata block is for your internal use if needed, but the final output must be just the tasks array under "tasks" key as per schema.
         "projectName": "Document Implementation", // Example, not strictly part of Zod schema for tasks list
-        "totalTasks": ${numTasks}, // Example
+        "totalTasks": ${effectiveNumTasks}, // Example
         "sourceFile": "${documentPath}", // Example
         "generatedAt": "YYYY-MM-DD" // Example
     }
@@ -275,12 +317,24 @@ Return your response in the specified JSON format:
 			};
 		});
 
-		// Remap dependencies for the NEWLY processed tasks
+		// Apply document adapter post-processing to add document-specific fields
+		let adapterProcessedTasks = processedNewTasks;
+		if (documentAdapter.postProcessTasks) {
+			try {
+				adapterProcessedTasks = documentAdapter.postProcessTasks(processedNewTasks, documentId);
+				report(`Applied adapter post-processing for ${adapterProcessedTasks.length} tasks`, 'debug');
+			} catch (error) {
+				report(`Error in adapter post-processing: ${error.message}. Using unprocessed tasks.`, 'warn');
+				adapterProcessedTasks = processedNewTasks;
+			}
+		}
+
+		// Remap dependencies for the NEWLY processed tasks (now adapter-processed)
 		// Dependencies can be:
 		// 1. To other new tasks (remapped from AI ID to newSequentialId)
 		// 2. To parent tasks (original IDs from parentTasksContext, should be < nextIdForThisDocument)
 		// 3. To existing tasks in the tag (original IDs from existingTasksInTag, should be < nextIdForThisDocument)
-		processedNewTasks.forEach((task) => {
+		adapterProcessedTasks.forEach((task) => {
 			task.dependencies = (task.dependencies || [])
 				.map(depId => {
 					// If depId was an AI-assigned ID for a task in *this* batch, remap it.
@@ -298,7 +352,7 @@ Return your response in the specified JSON format:
 					// Is it one of the existing tasks in the tag (and not a future ID from this batch)?
 					const isExistingTask = existingTasksInTag.some(et => et.id === depId);
 					// Is it another new task from this document (must have a lower ID)?
-					const isNewSiblingTask = processedNewTasks.some(nt => nt.id === depId && nt.id < task.id);
+					const isNewSiblingTask = adapterProcessedTasks.some(nt => nt.id === depId && nt.id < task.id);
 
 					const isValid = isParentTask || isExistingTask || isNewSiblingTask;
 					if (!isValid) {
@@ -311,8 +365,8 @@ Return your response in the specified JSON format:
 		// Combine tasks:
 		// If 'force' was true, existingTasksInTag is already empty.
 		// 'finalTasksForTag' will contain the tasks for the current tag after this document's processing.
-		const finalTasksForTag = append ? [...existingTasksInTag, ...processedNewTasks] :
-		                       (force ? processedNewTasks : [...existingTasksInTag, ...processedNewTasks]);
+		const finalTasksForTag = append ? [...existingTasksInTag, ...adapterProcessedTasks] :
+		                       (force ? adapterProcessedTasks : [...existingTasksInTag, ...adapterProcessedTasks]);
 
 
 		let allTagsData = {};
@@ -337,7 +391,7 @@ Return your response in the specified JSON format:
 
 		fs.writeFileSync(tasksPath, JSON.stringify(allTagsData, null, 2));
 		report(
-			`Successfully ${force ? 'overwritten' : (append ? 'appended' : 'updated')} ${processedNewTasks.length} tasks for document ${documentId} in tag '${targetTag}'. Total tasks in tag: ${finalTasksForTag.length}.`,
+			`Successfully ${force ? 'overwritten' : (append ? 'appended' : 'updated')} ${adapterProcessedTasks.length} tasks for document ${documentId} in tag '${targetTag}'. Total tasks in tag: ${finalTasksForTag.length}.`,
 			'success'
 		);
 
@@ -345,7 +399,7 @@ Return your response in the specified JSON format:
 			console.log(
 				boxen(
 					chalk.green(
-						`Generated ${processedNewTasks.length} new tasks for doc ${documentId}. Total in tag '${targetTag}': ${finalTasksForTag.length}`
+						`Generated ${adapterProcessedTasks.length} new tasks for doc ${documentId}. Total in tag '${targetTag}': ${finalTasksForTag.length}`
 					),
 					{ padding: 1, borderColor: 'green', borderStyle: 'round' }
 				)
@@ -357,7 +411,7 @@ Return your response in the specified JSON format:
 
 		return {
 			success: true,
-			generatedTasks: processedNewTasks, // Only tasks generated from THIS document
+			generatedTasks: adapterProcessedTasks, // Only tasks generated from THIS document (with adapter processing)
 			nextTaskId: currentIdForRemapping, // The next available ID for the subsequent document or run
 			telemetryData: aiServiceResponse?.telemetryData,
 			tagInfo: aiServiceResponse?.tagInfo // If your AI service provides this
