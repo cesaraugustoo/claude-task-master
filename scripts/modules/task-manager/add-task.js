@@ -29,26 +29,10 @@ import { generateObjectService } from '../ai-services-unified.js';
 import { getDefaultPriority } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import ContextGatherer from '../utils/contextGatherer.js';
+import { getAiTaskSchema } from './schemas/task-schema.js';
 
-// Define Zod schema for the expected AI output object
-const AiTaskDataSchema = z.object({
-	title: z.string().describe('Clear, concise title for the task'),
-	description: z
-		.string()
-		.describe('A one or two sentence description of the task'),
-	details: z
-		.string()
-		.describe('In-depth implementation details, considerations, and guidance'),
-	testStrategy: z
-		.string()
-		.describe('Detailed approach for verifying task completion'),
-	dependencies: z
-		.array(z.number())
-		.optional()
-		.describe(
-			'Array of task IDs that this task depends on (must be completed before this task can start)'
-		)
-});
+// Use centralized schema for AI-generated tasks
+const AiTaskDataSchema = getAiTaskSchema();
 
 /**
  * Get all tasks from all tags

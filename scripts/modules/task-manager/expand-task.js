@@ -18,40 +18,12 @@ import { COMPLEXITY_REPORT_FILE } from '../../../src/constants/paths.js';
 import { ContextGatherer } from '../utils/contextGatherer.js';
 import { FuzzyTaskSearch } from '../utils/fuzzyTaskSearch.js';
 import { flattenTasksWithSubtasks, findProjectRoot } from '../utils.js';
+import { getSubtaskSchema, getSubtaskArraySchema, getSubtaskWrapperSchema } from './schemas/task-schema.js';
 
-// --- Zod Schemas (Keep from previous step) ---
-const subtaskSchema = z
-	.object({
-		id: z
-			.number()
-			.int()
-			.positive()
-			.describe('Sequential subtask ID starting from 1'),
-		title: z.string().min(5).describe('Clear, specific title for the subtask'),
-		description: z
-			.string()
-			.min(10)
-			.describe('Detailed description of the subtask'),
-		dependencies: z
-			.array(z.number().int())
-			.describe('IDs of prerequisite subtasks within this expansion'),
-		details: z.string().min(20).describe('Implementation details and guidance'),
-		status: z
-			.string()
-			.describe(
-				'The current status of the subtask (should be pending initially)'
-			),
-		testStrategy: z
-			.string()
-			.optional()
-			.describe('Approach for testing this subtask')
-	})
-	.strict();
-const subtaskArraySchema = z.array(subtaskSchema);
-const subtaskWrapperSchema = z.object({
-	subtasks: subtaskArraySchema.describe('The array of generated subtasks.')
-});
-// --- End Zod Schemas ---
+// Use centralized schemas for subtasks
+const subtaskSchema = getSubtaskSchema();
+const subtaskArraySchema = getSubtaskArraySchema();
+const subtaskWrapperSchema = getSubtaskWrapperSchema();
 
 /**
  * Generates the system prompt for the main AI role (e.g., Claude).

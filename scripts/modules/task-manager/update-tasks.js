@@ -26,22 +26,11 @@ import { getModelConfiguration } from './models.js';
 import { ContextGatherer } from '../utils/contextGatherer.js';
 import { FuzzyTaskSearch } from '../utils/fuzzyTaskSearch.js';
 import { flattenTasksWithSubtasks, findProjectRoot } from '../utils.js';
+import { getUpdatedTaskSchema, getUpdatedTaskArraySchema } from './schemas/task-schema.js';
 
-// Zod schema for validating the structure of tasks AFTER parsing
-const updatedTaskSchema = z
-	.object({
-		id: z.number().int(),
-		title: z.string(),
-		description: z.string(),
-		status: z.string(),
-		dependencies: z.array(z.union([z.number().int(), z.string()])),
-		priority: z.string().optional(),
-		details: z.string().optional(),
-		testStrategy: z.string().optional(),
-		subtasks: z.array(z.any()).optional() // Keep subtasks flexible for now
-	})
-	.strip(); // Allow potential extra fields during parsing if needed, then validate structure
-const updatedTaskArraySchema = z.array(updatedTaskSchema);
+// Use centralized schemas for updated tasks
+const updatedTaskSchema = getUpdatedTaskSchema();
+const updatedTaskArraySchema = getUpdatedTaskArraySchema();
 
 /**
  * Parses an array of task objects from AI's text response.

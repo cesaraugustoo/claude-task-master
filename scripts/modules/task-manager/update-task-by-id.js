@@ -27,21 +27,10 @@ import { generateTextService } from '../ai-services-unified.js';
 import { getDebugFlag, isApiKeySet } from '../config-manager.js';
 import { ContextGatherer } from '../utils/contextGatherer.js';
 import { FuzzyTaskSearch } from '../utils/fuzzyTaskSearch.js';
+import { getUpdatedTaskSchema } from './schemas/task-schema.js';
 
-// Zod schema for post-parsing validation of the updated task object
-const updatedTaskSchema = z
-	.object({
-		id: z.number().int(),
-		title: z.string(), // Title should be preserved, but check it exists
-		description: z.string(),
-		status: z.string(),
-		dependencies: z.array(z.union([z.number().int(), z.string()])),
-		priority: z.string().optional(),
-		details: z.string().optional(),
-		testStrategy: z.string().optional(),
-		subtasks: z.array(z.any()).optional()
-	})
-	.strip(); // Allows parsing even if AI adds extra fields, but validation focuses on schema
+// Use centralized schema for updated tasks
+const updatedTaskSchema = getUpdatedTaskSchema();
 
 /**
  * Parses a single updated task object from AI's text response.

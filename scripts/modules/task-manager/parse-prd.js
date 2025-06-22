@@ -20,31 +20,11 @@ import { generateObjectService } from '../ai-services-unified.js';
 import { getDebugFlag } from '../config-manager.js';
 import generateTaskFiles from './generate-task-files.js';
 import { displayAiUsageSummary } from '../ui.js';
+import { getTaskSchema, getPrdResponseSchema } from './schemas/task-schema.js';
 
-// Define the Zod schema for a SINGLE task object
-const prdSingleTaskSchema = z.object({
-	id: z.number().int().positive(),
-	title: z.string().min(1),
-	description: z.string().min(1),
-	sourceDocumentId: z.string().min(1),
-	sourceDocumentType: z.string().min(1),
-	details: z.string().optional().default(''),
-	testStrategy: z.string().optional().default(''),
-	priority: z.enum(['high', 'medium', 'low']).default('medium'),
-	dependencies: z.array(z.number().int().positive()).optional().default([]),
-	status: z.string().optional().default('pending')
-});
-
-// Define the Zod schema for the ENTIRE expected AI response object
-const prdResponseSchema = z.object({
-	tasks: z.array(prdSingleTaskSchema),
-	metadata: z.object({
-		projectName: z.string(),
-		totalTasks: z.number(),
-		sourceFile: z.string(),
-		generatedAt: z.string()
-	})
-});
+// Use centralized schemas
+const prdSingleTaskSchema = getTaskSchema();
+const prdResponseSchema = getPrdResponseSchema();
 
 /**
  * Parse a document file and generate tasks
@@ -144,20 +124,12 @@ async function parseDocumentAndGenerateTasks(documentPath, documentId, documentT
 			report(`Force mode: Tag '${targetTag}' will be overwritten with tasks from this document. ${existingTasksInTag.length} existing tasks will be replaced.`, 'info');
 			existingTasksInTag = []; // Effectively start fresh for this tag for this document processing.
 			// nextIdForThisDocument is already currentTaskStartId, which should be 1 if orchestrator handles force correctly.
-		}
-		// Stray '}' was here, removed. The 'else' below correctly pairs with 'if (fs.existsSync(tasksPath))'
 		} else {
 			// No existing tasks in target tag, proceed without confirmation
 			report(
 				`Tag '${targetTag}' is empty or doesn't exist. Creating/updating tag with new tasks.`,
 				'info'
 			);
-		}
-
-		report(`Reading content from ${documentPath}`, 'info');
-		const documentContent = fs.readFileSync(documentPath, 'utf8');
-		if (!documentContent) {
-			throw new Error(`Input file ${documentPath} is empty or could not be read.`);
 		}
 
 		report(`Reading content from ${documentPath}`, 'info');
