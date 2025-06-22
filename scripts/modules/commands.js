@@ -45,7 +45,8 @@ import {
 	migrateProject,
 	// processDocumentHierarchy will be called by dev.js, not directly imported here usually
 	// Actually, it will be called directly from here now.
-	processDocumentHierarchy
+	processDocumentHierarchy,
+	mergeTasksInTag
 } from './task-manager.js';
 
 import {
@@ -4139,6 +4140,170 @@ Examples:
 				);
 			} catch (error) {
 				console.error(chalk.red(`Error copying tag: ${error.message}`));
+				process.exit(1);
+			}
+		})
+		.on('error', function (err) {
+			console.error(chalk.red(`Error: ${err.message}`));
+			process.exit(1);
+		});
+
+	// merge-tasks command
+	programInstance
+		.command('merge-tasks')
+		.description('Merge duplicate or similar tasks within a tag context')
+		.option(
+			'--tag <name>',
+			'Specify which tag context to merge tasks in (defaults to current active tag)'
+		)
+		.option(
+			'-f, --file <file>',
+			'Path to the tasks file',
+			TASKMASTER_TASKS_FILE
+		)
+		.option(
+			'--llm',
+			'Use LLM for borderline merge decisions (requires appropriate API key)'
+		)
+		.option(
+			'--dry-run',
+			'Preview changes without making modifications to the tasks file'
+		)
+		.option(
+			'--verbose',
+			'Show detailed diff information in dry-run mode'
+		)
+		.option(
+			'--output <file>',
+			'Save merged results to a different file (preserves original)'
+		)
+		.option(
+			'--similarity <threshold>',
+			'Set similarity threshold for semantic merging (0-1, default: 0.85)',
+			parseFloat
+		)
+		.action(async (options) => {
+			try {
+				const projectRoot = findProjectRoot();
+				if (!projectRoot) {
+					console.error(chalk.red('Error: Could not find project root.'));
+					process.exit(1);
+				}
+
+				const tasksPath = path.resolve(projectRoot, options.file);
+
+				// Validate tasks file exists
+				if (!fs.existsSync(tasksPath)) {
+					console.error(
+						chalk.red(`Error: Tasks file not found at path: ${tasksPath}`)
+					);
+					process.exit(1);
+				}
+
+				// Load tasks data
+				const tasksData = await readJSON(tasksPath);
+				
+				// Get current tag if none specified
+				const targetTag = options.tag || getCurrentTag(tasksData);
+				
+				if (!tasksData[targetTag]) {
+					console.error(
+						chalk.red(`Error: Tag '${targetTag}' not found in tasks file.`)
+					);
+					process.exit(1);
+				}
+
+				const tasks = tasksData[targetTag].tasks || [];
+				
+				if (tasks.length === 0) {
+					console.log(chalk.yellow(`No tasks found in tag '${targetTag}' to merge.`));
+					return;
+				}
+
+				console.log(chalk.blue(`Analyzing ${tasks.length} tasks in tag '${targetTag}' for duplicates...`));
+				
+				const mergeOptions = {
+					similarityThreshold: options.similarity || 0.85,
+					useLLM: options.llm || false,
+					preserveOriginalIds: true,
+					context: {
+						projectRoot,
+						commandName: 'merge-tasks',
+						outputType: 'cli'
+					},
+					outputFormat: 'text'
+				};
+
+				const result = await mergeTasksInTag(tasks, mergeOptions);
+				const { mergedTasks, mergeReport, telemetryData } = result;
+
+				// Display merge report
+				if (mergeReport.mergedGroups.length === 0) {
+					console.log(chalk.green('✅ No duplicate tasks found. Your task list is already clean!'));
+					return;
+				}
+
+				console.log(chalk.green(`\n🔄 Merge Analysis Complete:`));
+				console.log(`  • Original tasks: ${mergeReport.originalCount}`);
+				console.log(`  • Final tasks: ${mergeReport.finalCount}`);
+				console.log(`  • Tasks merged: ${mergeReport.originalCount - mergeReport.finalCount}`);
+				console.log(`  • Hash matches: ${mergeReport.strategy.hashMatches}`);
+				console.log(`  • Semantic matches: ${mergeReport.strategy.semanticMatches}`);
+				if (options.llm) {
+					console.log(`  • LLM decisions: ${mergeReport.strategy.llmDecisions}`);
+				}
+
+				// Show detailed merge information
+				if (options.verbose || options.dryRun) {
+					console.log(chalk.blue('\n📋 Detailed Merge Information:'));
+					for (const group of mergeReport.mergedGroups) {
+						console.log(`\n  Kept Task ${group.keptId}, merged from: [${group.mergedFrom.join(', ')}]`);
+						console.log(`  Strategy: ${group.strategy}`);
+						if (group.reasoning) {
+							console.log(`  Reasoning: ${group.reasoning}`);
+						}
+						if (group.similarity !== undefined) {
+							console.log(`  Similarity: ${(group.similarity * 100).toFixed(1)}%`);
+						}
+					}
+				}
+
+				// Dry run - just show what would happen
+				if (options.dryRun) {
+					console.log(chalk.yellow('\n🔍 Dry run complete - no changes made to tasks file.'));
+					console.log(chalk.gray('Remove --dry-run flag to apply these changes.'));
+					return;
+				}
+
+				// Apply changes
+				const outputPath = options.output ? path.resolve(projectRoot, options.output) : tasksPath;
+				
+				// Update the tasks data
+				tasksData[targetTag].tasks = mergedTasks;
+				
+				// Save to file
+				await writeJSON(outputPath, tasksData);
+				
+				if (options.output) {
+					console.log(chalk.green(`\n✅ Merged tasks saved to: ${outputPath}`));
+					console.log(chalk.gray('Original tasks file preserved.'));
+				} else {
+					console.log(chalk.green(`\n✅ Tasks merged successfully in tag '${targetTag}'!`));
+				}
+
+				// Display telemetry if available
+				if (telemetryData && telemetryData.length > 0) {
+					console.log(chalk.blue('\n📊 AI Usage Summary:'));
+					for (const telemetry of telemetryData) {
+						displayAiUsageSummary(telemetry, 'cli');
+					}
+				}
+
+			} catch (error) {
+				console.error(chalk.red(`Error merging tasks: ${error.message}`));
+				if (getDebugFlag()) {
+					console.error(chalk.red(error.stack));
+				}
 				process.exit(1);
 			}
 		})

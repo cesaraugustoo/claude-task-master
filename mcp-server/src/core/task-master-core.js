@@ -7,7 +7,7 @@
 // Import direct function implementations
 import { listTasksDirect } from './direct-functions/list-tasks.js';
 import { getCacheStatsDirect } from './direct-functions/cache-stats.js';
-import { parseDocumentDirect } from './direct-functions/parse-document.js'; // Updated import
+import { parseDocumentDirect } from './direct-functions/parse-prd.js'; // Updated import
 import { updateTasksDirect } from './direct-functions/update-tasks.js';
 import { updateTaskByIdDirect } from './direct-functions/update-task-by-id.js';
 import { updateSubtaskByIdDirect } from './direct-functions/update-subtask-by-id.js';
@@ -39,6 +39,7 @@ import { useTagDirect } from './direct-functions/use-tag.js';
 import { renameTagDirect } from './direct-functions/rename-tag.js';
 import { copyTagDirect } from './direct-functions/copy-tag.js';
 import { processDocsDirect } from './direct-functions/process-docs.js'; // Added
+import { mergeTasksDirect } from './direct-functions/merge-tasks.js';
 
 // Re-export utility functions
 export { findTasksPath } from './utils/path-utils.js';
@@ -78,7 +79,8 @@ export const directFunctions = new Map([
 	['listTagsDirect', listTagsDirect],
 	['useTagDirect', useTagDirect],
 	['renameTagDirect', renameTagDirect],
-	['copyTagDirect', copyTagDirect]
+	['copyTagDirect', copyTagDirect],
+	['mergeTasksDirect', mergeTasksDirect]
 ]);
 
 // Re-export all direct function implementations
@@ -116,5 +118,6 @@ export {
 	listTagsDirect,
 	useTagDirect,
 	renameTagDirect,
-	copyTagDirect
+	copyTagDirect,
+	mergeTasksDirect
 };

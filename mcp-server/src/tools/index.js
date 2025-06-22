@@ -6,7 +6,7 @@
 import { registerListTasksTool } from './get-tasks.js';
 import logger from '../logger.js';
 import { registerSetTaskStatusTool } from './set-task-status.js';
-import { registerParsePRDTool } from './parse-prd.js';
+import { registerParseDocumentTool } from './parse-document.js';
 import { registerUpdateTool } from './update.js';
 import { registerUpdateTaskTool } from './update-task.js';
 import { registerUpdateSubtaskTool } from './update-subtask.js';
@@ -35,6 +35,7 @@ import { registerListTagsTool } from './list-tags.js';
 import { registerUseTagTool } from './use-tag.js';
 import { registerRenameTagTool } from './rename-tag.js';
 import { registerCopyTagTool } from './copy-tag.js';
+import { registerMergeTasksTool } from './merge-tasks.js';
 import { registerResearchTool } from './research.js';
 import { registerProcessDocsTool } from './process-docs.js'; // Added
 
@@ -49,7 +50,7 @@ export function registerTaskMasterTools(server) {
 		// Group 1: Initialization & Setup
 		registerInitializeProjectTool(server);
 		registerModelsTool(server);
-		registerParsePRDTool(server); // For single document parsing
+		registerParseDocumentTool(server); // For single document parsing
 		registerProcessDocsTool(server); // Added: For hierarchical document processing
 
 		// Group 2: Task Analysis & Expansion
@@ -91,6 +92,7 @@ export function registerTaskMasterTools(server) {
 		registerUseTagTool(server);
 		registerRenameTagTool(server);
 		registerCopyTagTool(server);
+		registerMergeTasksTool(server);
 
 		// Group 8: Research Features
 		registerResearchTool(server);
