@@ -38,12 +38,14 @@ import { listTagsDirect } from './direct-functions/list-tags.js';
 import { useTagDirect } from './direct-functions/use-tag.js';
 import { renameTagDirect } from './direct-functions/rename-tag.js';
 import { copyTagDirect } from './direct-functions/copy-tag.js';
+import { processDocsDirect } from './direct-functions/process-docs.js'; // Added
 
 // Re-export utility functions
 export { findTasksPath } from './utils/path-utils.js';
 
 // Use Map for potential future enhancements like introspection or dynamic dispatch
 export const directFunctions = new Map([
+	['processDocsDirect', processDocsDirect], // Added
 	['listTasksDirect', listTasksDirect],
 	['getCacheStatsDirect', getCacheStatsDirect],
 	['parseDocumentDirect', parseDocumentDirect], // Updated entry
@@ -81,6 +83,7 @@ export const directFunctions = new Map([
 
 // Re-export all direct function implementations
 export {
+	processDocsDirect, // Added
 	listTasksDirect,
 	getCacheStatsDirect,
 	parseDocumentDirect, // Updated export

@@ -42,7 +42,10 @@ import {
 	findTaskById,
 	taskExists,
 	moveTask,
-	migrateProject
+	migrateProject,
+	// processDocumentHierarchy will be called by dev.js, not directly imported here usually
+	// Actually, it will be called directly from here now.
+	processDocumentHierarchy
 } from './task-manager.js';
 
 import {
@@ -674,7 +677,7 @@ function registerCommands(programInstance) {
 	// parse-document command (renamed from parse-prd)
 	programInstance
 		.command('parse-document')
-		.description('Parse a configured document source by its ID and generate tasks.')
+		.description('Parse a single configured document source by its ID and generate tasks.')
 		.option(
 			'-d, --document-id <id>',
 			'ID of the document source to parse (from .taskmaster/config.json)'
@@ -2171,6 +2174,59 @@ ${result.result}
 			displayCurrentTagIndicator(tag || getCurrentTag(projectRoot) || 'master');
 
 			await displayNextTask(tasksPath, reportPath, { projectRoot, tag });
+		});
+
+	// process-docs command (New)
+	programInstance
+		.command('process-docs')
+		.description('Process all configured document sources hierarchically to generate/update tasks.')
+		.option('-f, --force', 'Overwrite existing tasks in the target tag for the entire hierarchy processing.')
+		.option('--append', 'Append new tasks to existing tasks in the target tag.')
+		.option('-r, --research', 'Use the research model for potentially more informed task generation for all documents.')
+		.option('--tag <tag>', 'Specify tag context for task operations (influences output and overwrite checks for the entire hierarchy).')
+		.action(async (options) => {
+			// This action will be handled in dev.js by calling processDocumentHierarchy
+			// For now, this definition ensures the command is recognized by bin/task-master.js
+			// and its arguments are passed to dev.js.
+			// Actual implementation will be in dev.js.
+			// We can add logging here if needed for CLI-specific feedback before dev.js takes over.
+			const projectRoot = findProjectRoot();
+			if (!projectRoot) {
+				console.error(chalk.red('Error: Could not find project root.'));
+				process.exit(1);
+			}
+			const tag = options.tag || getCurrentTag(projectRoot) || 'master';
+			displayCurrentTagIndicator(tag);
+
+			console.log(chalk.blue('Starting hierarchical document processing...'));
+			if (options.force) console.log(chalk.yellow('Force mode enabled: Existing tasks in the target tag may be overwritten.'));
+			if (options.append) console.log(chalk.blue('Append mode enabled: New tasks will be added to the target tag.'));
+			if (options.research) console.log(chalk.blue('Research mode enabled for all document processing.'));
+
+			let spinner;
+			try {
+				spinner = ora('Processing document hierarchy...\n').start();
+				const result = await processDocumentHierarchy({
+					projectRoot,
+					tag,
+					force: options.force || false,
+					append: options.append || false,
+					research: options.research || false,
+					// mcpLog and session would be passed if this were an MCP context
+				});
+				spinner.succeed('Hierarchical document processing complete!');
+				if (result.message) {
+					console.log(chalk.blue(result.message));
+				}
+				// TODO: Handle aggregated telemetry if returned by result.aggregatedTelemetry
+			} catch (error) {
+				if (spinner) spinner.fail(`Error processing document hierarchy: ${error.message}`);
+				else console.error(chalk.red(`Error processing document hierarchy: ${error.message}`));
+				if (getDebugFlag()) {
+					console.error(error);
+				}
+				process.exit(1);
+			}
 		});
 
 	// show command

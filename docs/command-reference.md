@@ -2,15 +2,53 @@
 
 Here's a comprehensive reference of all available commands:
 
-## Parse PRD
+## Process Document Hierarchy (`process-docs`)
+
+This command processes all document sources defined in the `documentSources` array in your `.taskmaster/config.json` file. It respects the parent-child relationships to parse documents in the correct order, providing parent task context to child document parsing. This is the primary command for generating a comprehensive task list from a structured set of project documents (PRDs, SDDs, Specs, etc.).
 
 ```bash
-# Parse a PRD file and generate tasks
-task-master parse-prd <prd-file.txt>
+# Process all configured documents and generate tasks in the current/default tag
+task-master process-docs
 
-# Limit the number of tasks generated
-task-master parse-prd <prd-file.txt> --num-tasks=10
+# Process documents and store tasks under a specific tag
+task-master process-docs --tag=feature-xyz
+
+# Force overwrite tasks in the target tag (use with caution)
+task-master process-docs --force
+
+# Append new tasks to existing tasks in the target tag
+task-master process-docs --append
+
+# Enable research mode for all document parsing stages
+task-master process-docs --research
 ```
+**Options:**
+-   `--tag <tag>`: Specify the tag context for task generation. If omitted, uses the current active tag or "master".
+-   `--force`: If true, any existing tasks in the target tag will be overwritten by the tasks generated from this process.
+-   `--append`: If true, newly generated tasks will be added to any existing tasks in the target tag. Cannot be used with `--force`.
+-   `--research`: If true, enables the research model for potentially more informed task generation during each document parsing stage.
+
+## Parse Single Document (`parse-document`)
+
+This command parses a single document specified by its ID (which must be defined in the `documentSources` array in `.taskmaster/config.json`). This is useful for regenerating tasks from a specific document or for more granular control if you don't want to process the entire hierarchy.
+
+```bash
+# Parse a specific document by its configured ID
+task-master parse-document --document-id=<doc-id-from-config>
+
+# Limit the number of tasks generated from this specific document
+task-master parse-document --document-id=<doc-id> --num-tasks=5
+
+# Specify output tag, force overwrite, or append for this single document
+task-master parse-document --document-id=<doc-id> --tag=my-feature --force
+```
+**Options:**
+-   `--document-id <id>`: (Required) The ID of the document source (from `documentSources` in `.taskmaster/config.json`) to parse.
+-   `--num-tasks <number>`: Approximate number of top-level tasks to generate from this document. Defaults to the value in `parserConfig` for the document or the global default.
+-   `--force`: Overwrite existing tasks in the target tag if any were previously generated *for this specific document ID or if the tag is being newly populated by it*.
+-   `--append`: Append generated tasks to the existing tasks in the target tag.
+-   `--research`: Enable research model for this specific document parsing.
+-   `--tag <tag>`: Specify tag context.
 
 ## List Tasks
 

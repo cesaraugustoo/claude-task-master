@@ -93,27 +93,32 @@ jest.unstable_mockModule('path', () => ({
 	join: jest.fn((dir, file) => `${dir}/${file}`)
 }));
 
-// Import the mocked modules
-const { readJSON, writeJSON, log, promptYesNo } = await import(
-	'../../../../../scripts/modules/utils.js'
-);
+// Declare variables for modules that will be imported dynamically
+let readJSON, writeJSON, log, promptYesNo;
+let generateObjectService;
+let generateTaskFiles;
+let fs, path;
+let parsePRD;
 
-const { generateObjectService } = await import(
-	'../../../../../scripts/modules/ai-services-unified.js'
-);
-const generateTaskFiles = (
-	await import(
+beforeAll(async () => {
+	// Import the mocked modules
+	({ readJSON, writeJSON, log, promptYesNo } = await import(
+		'../../../../../scripts/modules/utils.js'
+	));
+	({ generateObjectService } = await import(
+		'../../../../../scripts/modules/ai-services-unified.js'
+	));
+	generateTaskFiles = (await import(
 		'../../../../../scripts/modules/task-manager/generate-task-files.js'
-	)
-).default;
+	)).default;
+	fs = await import('fs');
+	path = await import('path');
 
-const fs = await import('fs');
-const path = await import('path');
-
-// Import the module under test
-const { default: parsePRD } = await import(
-	'../../../../../scripts/modules/task-manager/parse-prd.js'
-);
+	// Import the module under test
+	({ default: parsePRD } = await import(
+		'../../../../../scripts/modules/task-manager/parse-prd.js'
+	));
+});
 
 // Sample data for tests (from main test file)
 const sampleClaudeResponse = {
@@ -432,5 +437,215 @@ describe('parsePRD', () => {
 
 		// Verify prompt was NOT called with append flag
 		expect(promptYesNo).not.toHaveBeenCalled();
+	});
+
+	// New tests for hierarchical processing enhancements
+	describe('Hierarchical Context Enhancements', () => {
+		const mockParentTasks = [
+			{ id: 100, title: 'Parent Task 1', description: 'Description of parent 1', sourceDocumentId: 'parent_doc' },
+			{ id: 101, title: 'Parent Task 2', description: 'Description of parent 2', sourceDocumentId: 'parent_doc' },
+		];
+		const currentDocId = 'current_doc_123';
+		const currentDocType = 'FEATURE_PRD';
+
+		test('should include parentTasksContext in AI prompt and use currentTaskStartId', async () => {
+			const startId = 10;
+			generateObjectService.mockResolvedValueOnce({
+				mainResult: { object: { tasks: [{id: 1, title: 'Task 1 from AI'}] } }, // AI might return its own IDs
+				telemetryData: {},
+			});
+
+			await parsePRD('path/to/doc.txt', 'doc_id', 'doc_type', 'tasks.json', 1, {
+				parentTasksContext: mockParentTasks,
+				currentTaskStartId: startId,
+				projectRoot: '/test',
+			});
+
+			const systemPrompt = generateObjectService.mock.calls[0][0].systemPrompt;
+			expect(systemPrompt).toContain('preceding document');
+			expect(systemPrompt).toContain(`ID: ${mockParentTasks[0].id}, Title: ${mockParentTasks[0].title}`);
+			expect(systemPrompt).toContain(`starting from ${startId}`);
+			expect(systemPrompt).toContain(`"id": number, // Starting from ${startId}`);
+		});
+
+		test('should correctly remap AI-generated task IDs starting from currentTaskStartId', async () => {
+			const startId = 5;
+			const aiTasks = [
+				{ id: 1, title: 'AI Task 1', dependencies: [] }, // AI might use its own numbering
+				{ id: 2, title: 'AI Task 2', dependencies: [1] },
+			];
+			generateObjectService.mockResolvedValueOnce({
+				mainResult: { object: { tasks: aiTasks } },
+				telemetryData: {},
+			});
+
+			const result = await parsePRD('path/doc.txt', currentDocId, currentDocType, 'tasks.json', 2, {
+				currentTaskStartId: startId,
+				projectRoot: '/test',
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.generatedTasks.length).toBe(2);
+			expect(result.generatedTasks[0].id).toBe(startId); // 5
+			expect(result.generatedTasks[0].title).toBe('AI Task 1');
+			expect(result.generatedTasks[0].sourceDocumentId).toBe(currentDocId);
+			expect(result.generatedTasks[1].id).toBe(startId + 1); // 6
+			expect(result.generatedTasks[1].title).toBe('AI Task 2');
+			// Check remapped local dependency
+			expect(result.generatedTasks[1].dependencies).toEqual([startId]); // Depends on new ID 5
+			expect(result.nextTaskId).toBe(startId + 2); // 7
+		});
+
+		test('should correctly handle dependencies on parentTasksContext and existingTasksInTag', async () => {
+			const startId = 20;
+			const existingTagTasks = [{ id: 1, title: 'Existing Task in Tag', sourceDocumentId: 'another_doc' }];
+			fs.default.readFileSync.mockImplementation((filePath) => {
+                if (filePath.endsWith('.txt')) return samplePRDContent; // For document content
+                if (filePath.endsWith('tasks.json')) { // For initial check by parsePRD
+                    return JSON.stringify({ master: { tasks: existingTagTasks } });
+                }
+                return '{}';
+            });
+            readJSON.mockImplementation((filePath) => { // For readJSON inside parsePRD
+                 if (filePath.endsWith('tasks.json')) {
+                    return { master: { tasks: existingTagTasks } };
+                }
+                return {};
+            });
+
+
+			const aiTasks = [
+                // AI references parent task 100, and its own task 2 (which will become startId + 1)
+				{ id: 1, title: 'New Task 1', dependencies: [100, 2] },
+			];
+			generateObjectService.mockResolvedValueOnce({
+				mainResult: { object: { tasks: aiTasks } },
+				telemetryData: {},
+			});
+
+			const result = await parsePRD('path/doc.txt', currentDocId, currentDocType, 'tasks.json', 1, {
+				parentTasksContext: mockParentTasks,
+				currentTaskStartId: startId, // 20
+				projectRoot: '/test',
+                append: true, // To load existingTagTasks
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.generatedTasks.length).toBe(1);
+			const newTask = result.generatedTasks[0];
+			expect(newTask.id).toBe(startId); // 20
+            // AI task 1 depends on parent 100 and AI task 2.
+            // AI task 1 becomes ID 20. AI task 2 does not exist in this AI response, so that dependency should be filtered.
+            // So, only dependency on parent 100 should remain.
+            // Let's adjust AI response for a clearer test of mixed dependencies.
+            // AI Task A (id:1) -> depends on parent 100 and AI Task B (id:2)
+            // AI Task B (id:2) -> depends on existing task 1
+            const clearerAiTasks = [
+                { id: 50, title: 'New Task A', dependencies: [100, 51] }, // AI uses 50, 51
+                { id: 51, title: 'New Task B', dependencies: [1] }
+            ];
+            generateObjectService.mockResolvedValueOnce({
+				mainResult: { object: { tasks: clearerAiTasks } },
+				telemetryData: {},
+			});
+
+            const resultClearer = await parsePRD('path/doc.txt', currentDocId, currentDocType, 'tasks.json', 2, {
+				parentTasksContext: mockParentTasks, // contains ID 100
+				currentTaskStartId: startId, // 20
+				projectRoot: '/test',
+                append: true,
+			});
+
+            // New Task A becomes ID 20, New Task B becomes ID 21
+            // Task A (20) should depend on Parent 100 and New Task B (21)
+            // Task B (21) should depend on Existing Task 1
+            expect(resultClearer.generatedTasks[0].id).toBe(startId); // 20
+            expect(resultClearer.generatedTasks[0].dependencies).toEqual(expect.arrayContaining([100, startId + 1]));
+            expect(resultClearer.generatedTasks[1].id).toBe(startId+1); // 21
+            expect(resultClearer.generatedTasks[1].dependencies).toEqual([1]);
+		});
+
+
+		test('should return correct structure including generatedTasks and nextTaskId', async () => {
+			const startId = 1;
+			generateObjectService.mockResolvedValueOnce({
+				mainResult: { object: { tasks: [{id: 1, title: 'T1'}] } },
+				telemetryData: {},
+			});
+			const result = await parsePRD('path/doc.txt', currentDocId, currentDocType, 'tasks.json', 1, {
+				currentTaskStartId: startId, projectRoot: '/test'
+			});
+			expect(result).toHaveProperty('success', true);
+			expect(result).toHaveProperty('generatedTasks');
+			expect(result.generatedTasks.length).toBe(1);
+			expect(result.generatedTasks[0].id).toBe(startId);
+			expect(result).toHaveProperty('nextTaskId', startId + 1);
+			expect(result).toHaveProperty('telemetryData');
+		});
+
+        test('finalTasksForTag should only contain new tasks if force is true', async () => {
+            fs.default.writeFileSync.mockClear(); // Clear previous write calls
+            const existingTagTasks = [{ id: 1, title: 'Existing Task' }];
+            fs.default.readFileSync.mockImplementation((filePath) => {
+                if (filePath.endsWith('.txt')) return samplePRDContent;
+                if (filePath.endsWith('tasks.json')) return JSON.stringify({ master: { tasks: existingTagTasks } });
+                return '{}';
+            });
+             readJSON.mockImplementation((filePath) => {
+                 if (filePath.endsWith('tasks.json')) return { master: { tasks: existingTagTasks } };
+                return {};
+            });
+
+
+            const aiTasks = [{ id: 1, title: 'New Task From AI' }];
+            generateObjectService.mockResolvedValueOnce({
+                mainResult: { object: { tasks: aiTasks } },
+                telemetryData: {},
+            });
+
+            // Call with force: true. currentTaskStartId would typically be 1 if orchestrator handles force.
+            await parsePRD('path/doc.txt', currentDocId, currentDocType, 'tasks.json', 1, {
+                force: true, currentTaskStartId: 1, projectRoot: '/test'
+            });
+
+            expect(fs.default.writeFileSync).toHaveBeenCalledTimes(1);
+            const writtenData = JSON.parse(fs.default.writeFileSync.mock.calls[0][1]);
+            expect(writtenData.master.tasks.length).toBe(1);
+            expect(writtenData.master.tasks[0].title).toBe('New Task From AI');
+            expect(writtenData.master.tasks[0].id).toBe(1); // ID remapped from currentTaskStartId
+        });
+
+        test('finalTasksForTag should append tasks if append is true', async () => {
+            fs.default.writeFileSync.mockClear();
+            const existingTagTasks = [{ id: 1, title: 'Existing Task 1', sourceDocumentId: 'old_doc' }];
+             fs.default.readFileSync.mockImplementation((filePath) => {
+                if (filePath.endsWith('.txt')) return samplePRDContent;
+                if (filePath.endsWith('tasks.json')) return JSON.stringify({ master: { tasks: existingTagTasks } });
+                return '{}';
+            });
+            readJSON.mockImplementation((filePath) => {
+                 if (filePath.endsWith('tasks.json')) return { master: { tasks: existingTagTasks } };
+                return {};
+            });
+
+
+            const aiTasks = [{ id: 1, title: 'Appended Task' }]; // AI gives ID 1
+            generateObjectService.mockResolvedValueOnce({
+                mainResult: { object: { tasks: aiTasks } },
+                telemetryData: {},
+            });
+
+            // currentTaskStartId should be after existing tasks, e.g., 2
+            await parsePRD('path/doc.txt', currentDocId, currentDocType, 'tasks.json', 1, {
+                append: true, currentTaskStartId: 2, projectRoot: '/test'
+            });
+
+            expect(fs.default.writeFileSync).toHaveBeenCalledTimes(1);
+            const writtenData = JSON.parse(fs.default.writeFileSync.mock.calls[0][1]);
+            expect(writtenData.master.tasks.length).toBe(2);
+            expect(writtenData.master.tasks[0].title).toBe('Existing Task 1');
+            expect(writtenData.master.tasks[1].title).toBe('Appended Task');
+            expect(writtenData.master.tasks[1].id).toBe(2); // ID remapped
+        });
 	});
 });

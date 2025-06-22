@@ -44,9 +44,68 @@ Taskmaster uses two primary methods for configuration:
           "azureBaseURL": "https://your-endpoint.azure.com/",
           "vertexProjectId": "your-gcp-project-id",
           "vertexLocation": "us-central1"
-        }
+        },
+        "documentSources": [ // New section for hierarchical document processing
+          {
+            "id": "product_level_prd",
+            "type": "PRODUCT_PRD",
+            "path": ".taskmaster/docs/prd.txt",
+            "parserConfig": {
+              "numTasks": 15 // Example: Request more tasks from this important doc
+            }
+          },
+          {
+            "id": "feature_auth_prd",
+            "type": "FEATURE_PRD",
+            "path": "docs/features/authentication_feature.md",
+            "parentId": "product_level_prd", // Links to the 'product_level_prd'
+            "parserConfig": {}
+          },
+          {
+            "id": "core_arch_sdd",
+            "type": "SYSTEM_DESIGN_DOC",
+            "path": "docs/architecture/core_sdd.md",
+            "parentId": "product_level_prd", // Also a child of 'product_level_prd'
+            "parserConfig": {}
+          },
+          {
+            "id": "auth_api_spec",
+            "type": "API_SPEC",
+            "path": "docs/specs/auth_api.md",
+            "parentId": "feature_auth_prd", // Grandchild, linked to 'feature_auth_prd'
+            "parserConfig": {}
+          }
+        ]
       }
       ```
+
+## Hierarchical Document Configuration (`documentSources`)
+
+The `documentSources` array in `.taskmaster/config.json` allows you to define a hierarchy of source documents (like Product Requirement Documents, System Design Documents, Feature Specs, etc.) that Task Master can process to generate a comprehensive set of tasks. This is primarily used by the `task-master process-docs` command.
+
+Each object in the `documentSources` array defines a single source document and can have the following properties:
+
+-   **`id`** (string, required): A unique identifier for this document source. This ID is used to link parent and child documents and is stored in generated tasks (`sourceDocumentId`).
+-   **`type`** (string, required): A type for the document (e.g., `PRODUCT_PRD`, `FEATURE_PRD`, `SYSTEM_DESIGN_DOC`, `API_SPEC`). This helps in categorizing documents and can be used by the AI for context.
+-   **`path`** (string, required): The file path to the document, relative to the project root.
+-   **`parentId`** (string, optional): The `id` of another document source in this array that serves as the parent for the current document. This creates the hierarchy. Documents without a `parentId` are considered root documents.
+-   **`parserConfig`** (object, optional): An object to provide specific parsing configurations for this document.
+    -   **`numTasks`** (number, optional): Specifies the approximate number of top-level tasks the AI should try to generate from this specific document. This overrides the global `defaultTasksPerDocument` for this document only.
+    -   *(Future configurations for specific prompts, models per document, etc., could be added here.)*
+
+**Example Hierarchy:**
+
+The example in the `.taskmaster/config.json` structure above shows:
+- A root `product_level_prd`.
+- `feature_auth_prd` and `core_arch_sdd` as direct children of `product_level_prd`.
+- `auth_api_spec` as a child of `feature_auth_prd`, making it a grandchild of the product PRD.
+
+When `task-master process-docs` is run, Task Master will:
+1.  Determine the correct processing order (parents before children).
+2.  Parse each document, providing context from parent tasks to the AI when processing child documents.
+3.  Generate tasks that are all stored under a single specified tag in `tasks.json`, with each task correctly attributed to its `sourceDocumentId` and `sourceDocumentType`.
+
+This allows for a structured breakdown of complex projects into manageable, interconnected tasks.
 
 2.  **Legacy `.taskmasterconfig` File (Backward Compatibility)**
 
