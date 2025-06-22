@@ -4,6 +4,7 @@ import path from 'path';
 import { readJSON, log } from '../utils.js';
 import parseDocumentAndGenerateTasks from './parse-prd.js'; // This will be the enhanced version
 import { getConfig } from '../config-manager.js';
+import { classifyDocument } from './utils/classify-document.js';
 
 // Helper function to sort documents ensuring parents are processed before children
 function sortDocumentSources(documentSources, logFn = log) {
@@ -230,6 +231,47 @@ async function processDocumentHierarchy(options = {}) {
             continue;
         }
 
+        // Handle automatic document classification if type is 'auto'
+        let finalDocumentType = doc.type;
+        if (doc.type === 'auto') {
+            logFn.info(`Document ${doc.id} has type 'auto'. Attempting automatic classification...`);
+            
+            try {
+                // Read the document content for classification
+                const documentContent = fs.readFileSync(absoluteDocPath, 'utf8');
+                
+                // Get LLM fallback setting from config or doc-specific setting
+                const useLLMFallback = doc.llmFallback !== false && config.global?.enableLLMClassification !== false;
+                
+                // Perform classification
+                const classificationResult = await classifyDocument(documentContent, {
+                    useLLMFallback,
+                    threshold: config.global?.classificationThreshold || 0.65,
+                    session,
+                    projectRoot
+                });
+
+                finalDocumentType = classificationResult.type;
+                const confidencePercent = Math.round(classificationResult.confidence * 100);
+                
+                logFn.success(`Classified ${doc.id} as '${finalDocumentType}' (${classificationResult.source}, ${confidencePercent}% confidence)`);
+                
+                // Log reasoning if available from LLM
+                if (classificationResult.reasoning) {
+                    logFn.debug(`Classification reasoning: ${classificationResult.reasoning}`);
+                }
+
+                // TODO: Track telemetry if available
+                if (classificationResult.telemetryData) {
+                    // Aggregate classification telemetry for later reporting
+                }
+                
+            } catch (classificationError) {
+                logFn.warn(`Failed to classify document ${doc.id}: ${classificationError.message}. Defaulting to 'OTHER'.`);
+                finalDocumentType = 'OTHER';
+            }
+        }
+
         let parentTasksContext = [];
         if (doc.parentId) {
             const parentDocTaskSet = (allGeneratedTasksByDocId[doc.parentId] && allGeneratedTasksByDocId[doc.parentId][targetTag])
@@ -267,7 +309,7 @@ async function processDocumentHierarchy(options = {}) {
             const result = await parseDocumentAndGenerateTasks(
                 absoluteDocPath,
                 doc.id,
-                doc.type,
+                finalDocumentType,
                 tasksPath,
                 numTasksToGenerate,
                 parseOptions

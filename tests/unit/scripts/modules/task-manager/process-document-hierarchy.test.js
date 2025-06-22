@@ -4,6 +4,7 @@ import { jest } from '@jest/globals'; // Import jest global
 jest.mock('../../../../../scripts/modules/config-manager.js');
 jest.mock('../../../../../scripts/modules/utils.js');
 jest.mock('../../../../../scripts/modules/task-manager/parse-prd.js');
+jest.mock('../../../../../scripts/modules/task-manager/utils/classify-document.js');
 jest.mock('fs');
 
 // Declare variables for modules that will be imported dynamically
@@ -11,6 +12,7 @@ let processDocumentHierarchy;
 let configManager;
 let utils;
 let taskParser; // This is parseDocumentAndGenerateTasks
+let classifyDocument;
 let fs;
 let path;
 
@@ -38,6 +40,7 @@ beforeAll(async () => {
     processDocumentHierarchy = (await import('../../../../../scripts/modules/task-manager/process-document-hierarchy.js')).default;
     configManager = await import('../../../../../scripts/modules/config-manager.js');
     taskParser = await import('../../../../../scripts/modules/task-manager/parse-prd.js');
+    classifyDocument = await import('../../../../../scripts/modules/task-manager/utils/classify-document.js');
     fs = (await import('fs')).default; // fs is often default export when mocked or actual
     path = (await import('path')).default; // path is also often default
 });
@@ -315,6 +318,139 @@ describe('processDocumentHierarchy', () => {
 
             await expect(processDocumentHierarchy({ projectRoot: '/test/project' })).rejects.toThrow(/Circular dependency detected/);
             expect(taskParser.default).not.toHaveBeenCalled();
+        });
+
+        it('should automatically classify document type when type is "auto"', async () => {
+            // Mock document content that should classify as PRD
+            const prdContent = `Product Requirements Document
+
+Problem Statement:
+Users need better authentication
+
+User Stories:
+- As a user, I want to login
+- As a user, I want to reset password
+
+Business Goals:
+- Improve user experience
+- Increase security`;
+
+            fs.readFileSync.mockReturnValue(prdContent);
+            classifyDocument.classifyDocument.mockResolvedValue({
+                type: 'PRD',
+                confidence: 0.85,
+                source: 'regex'
+            });
+
+            mockConfig.documentSources = [
+                { id: 'doc1', type: 'auto', path: 'docs/auto-doc.txt' },
+            ];
+            
+            taskParser.default.mockResolvedValueOnce({
+                success: true,
+                generatedTasks: [{ id: 1, title: 'Task from auto-classified doc' }],
+                nextTaskId: 2,
+            });
+
+            await processDocumentHierarchy({ projectRoot: '/test/project' });
+
+            // Verify classification was called with document content
+            expect(fs.readFileSync).toHaveBeenCalledWith(
+                expect.stringContaining('auto-doc.txt'),
+                'utf8'
+            );
+            expect(classifyDocument.classifyDocument).toHaveBeenCalledWith(
+                prdContent,
+                expect.objectContaining({
+                    useLLMFallback: true, // Default behavior
+                    threshold: 0.65,
+                    projectRoot: '/test/project'
+                })
+            );
+
+            // Verify the classified type was passed to parser, not 'auto'
+            expect(taskParser.default).toHaveBeenCalledWith(
+                expect.stringContaining('auto-doc.txt'),
+                'doc1',
+                'PRD', // Should use classified type, not 'auto'
+                expect.any(String),
+                expect.any(Number),
+                expect.any(Object)
+            );
+
+            // Verify success logging
+            expect(mockLogImpl.success).toHaveBeenCalledWith(
+                expect.stringContaining(`Classified doc1 as 'PRD' (regex, 85% confidence)`)
+            );
+        });
+
+        it('should handle classification failure gracefully and default to OTHER', async () => {
+            const documentContent = 'Some ambiguous content';
+            fs.readFileSync.mockReturnValue(documentContent);
+            classifyDocument.classifyDocument.mockRejectedValue(new Error('Classification failed'));
+
+            mockConfig.documentSources = [
+                { id: 'doc1', type: 'auto', path: 'docs/auto-doc.txt' },
+            ];
+            
+            taskParser.default.mockResolvedValueOnce({
+                success: true,
+                generatedTasks: [],
+                nextTaskId: 1,
+            });
+
+            await processDocumentHierarchy({ projectRoot: '/test/project' });
+
+            // Verify classification was attempted
+            expect(classifyDocument.classifyDocument).toHaveBeenCalled();
+
+            // Verify fallback to 'OTHER' type
+            expect(taskParser.default).toHaveBeenCalledWith(
+                expect.any(String),
+                'doc1',
+                'OTHER', // Should fallback to 'OTHER' on classification failure
+                expect.any(String),
+                expect.any(Number),
+                expect.any(Object)
+            );
+
+            // Verify warning was logged
+            expect(mockLogImpl.warn).toHaveBeenCalledWith(
+                expect.stringContaining('Failed to classify document doc1: Classification failed. Defaulting to \'OTHER\'.')
+            );
+        });
+
+        it('should respect document-specific llmFallback setting', async () => {
+            const documentContent = 'Some document content';
+            fs.readFileSync.mockReturnValue(documentContent);
+            classifyDocument.classifyDocument.mockResolvedValue({
+                type: 'UX_SPEC',
+                confidence: 0.7,
+                source: 'regex'
+            });
+
+            mockConfig.documentSources = [
+                { id: 'doc1', type: 'auto', path: 'docs/auto-doc.txt', llmFallback: false },
+            ];
+            mockConfig.global.enableLLMClassification = true; // Global setting is true
+            
+            taskParser.default.mockResolvedValueOnce({
+                success: true,
+                generatedTasks: [],
+                nextTaskId: 1,
+            });
+
+            await processDocumentHierarchy({ projectRoot: '/test/project' });
+
+            // Verify classification was called with llmFallback disabled
+            expect(classifyDocument.classifyDocument).toHaveBeenCalledWith(
+                documentContent,
+                expect.objectContaining({
+                    useLLMFallback: false, // Should respect doc-specific setting
+                    threshold: 0.65,
+                    projectRoot: '/test/project'
+                })
+            );
         });
 
     });
