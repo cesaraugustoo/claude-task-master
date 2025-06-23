@@ -2184,6 +2184,7 @@ ${result.result}
 		.option('-f, --force', 'Overwrite existing tasks in the target tag for the entire hierarchy processing.')
 		.option('--append', 'Append new tasks to existing tasks in the target tag.')
 		.option('-r, --research', 'Use the research model for potentially more informed task generation for all documents.')
+		.option('--escalate', 'Apply priority escalation rules after processing all documents.')
 		.option('--tag <tag>', 'Specify tag context for task operations (influences output and overwrite checks for the entire hierarchy).')
 		.action(async (options) => {
 			// This action will be handled in dev.js by calling processDocumentHierarchy
@@ -2203,6 +2204,7 @@ ${result.result}
 			if (options.force) console.log(chalk.yellow('Force mode enabled: Existing tasks in the target tag may be overwritten.'));
 			if (options.append) console.log(chalk.blue('Append mode enabled: New tasks will be added to the target tag.'));
 			if (options.research) console.log(chalk.blue('Research mode enabled for all document processing.'));
+			if (options.escalate) console.log(chalk.blue('Priority escalation enabled: Task priorities will be automatically adjusted.'));
 
 			let spinner;
 			try {
@@ -2213,6 +2215,7 @@ ${result.result}
 					force: options.force || false,
 					append: options.append || false,
 					research: options.research || false,
+					escalate: options.escalate || false,
 					// mcpLog and session would be passed if this were an MCP context
 				});
 				spinner.succeed('Hierarchical document processing complete!');
@@ -4166,6 +4169,10 @@ Examples:
 			'Use LLM for borderline merge decisions (requires appropriate API key)'
 		)
 		.option(
+			'--escalate',
+			'Apply priority escalation rules after merging tasks'
+		)
+		.option(
 			'--dry-run',
 			'Preview changes without making modifications to the tasks file'
 		)
@@ -4225,11 +4232,13 @@ Examples:
 				const mergeOptions = {
 					similarityThreshold: options.similarity || 0.85,
 					useLLM: options.llm || false,
+					escalate: options.escalate || false,
 					preserveOriginalIds: true,
 					context: {
 						projectRoot,
 						commandName: 'merge-tasks',
-						outputType: 'cli'
+						outputType: 'cli',
+						tagName: targetTag
 					},
 					outputFormat: 'text'
 				};
@@ -4252,6 +4261,10 @@ Examples:
 				if (options.llm) {
 					console.log(`  • LLM decisions: ${mergeReport.strategy.llmDecisions}`);
 				}
+				if (options.escalate) {
+					const escalatedCount = mergedTasks.filter(task => task.escalationReason).length;
+					console.log(`  • Priority escalations: ${escalatedCount}`);
+				}
 
 				// Show detailed merge information
 				if (options.verbose || options.dryRun) {
@@ -4264,6 +4277,17 @@ Examples:
 						}
 						if (group.similarity !== undefined) {
 							console.log(`  Similarity: ${(group.similarity * 100).toFixed(1)}%`);
+						}
+					}
+				}
+
+				// Show detailed escalation information
+				if ((options.verbose || options.dryRun) && options.escalate) {
+					console.log(chalk.blue('\n🎯 Priority Escalation Details:'));
+					for (const task of mergedTasks) {
+						if (task.escalationReason) {
+							console.log(`\n  ↑ Task #${task.id} escalated to '${task.priority}'`);
+							console.log(`  Reason: ${task.escalationReason}`);
 						}
 					}
 				}

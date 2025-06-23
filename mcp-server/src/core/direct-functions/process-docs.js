@@ -20,7 +20,7 @@ import { getConfig } from '../../../scripts/modules/config-manager.js'; // To po
  * @returns {Promise<Object>} Result of the processing.
  */
 export async function processDocsDirect(args, mcpLog, context = {}) {
-	const { projectRoot, tag, force, append, research } = args;
+	const { projectRoot, tag, force, append, research, escalate } = args;
 	const session = context.session;
 
 	try {
@@ -29,6 +29,7 @@ export async function processDocsDirect(args, mcpLog, context = {}) {
 		if (force) mcpLog.warn('Force mode enabled: Existing tasks in the target tag may be overwritten.');
 		if (append) mcpLog.info('Append mode enabled: New tasks will be added to existing tasks in the target tag.');
 		if (research) mcpLog.info('Research mode enabled for all document processing stages.');
+		if (escalate) mcpLog.info('Priority escalation enabled: Task priorities will be automatically adjusted.');
 
 		// processDocumentHierarchy expects options object
 		const options = {
@@ -37,6 +38,7 @@ export async function processDocsDirect(args, mcpLog, context = {}) {
 			force: force || false,
 			append: append || false,
 			research: research || false,
+			escalate: escalate || false,
 			mcpLog, // Pass the MCP logger
 			session   // Pass the MCP session
 		};

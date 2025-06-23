@@ -487,3 +487,149 @@ The demo script showed the system working perfectly:
 - **5 tasks escalated to high priority** (PRD features, epics, security, performance-critical)
 - **3 tasks demoted to low priority** (incomplete descriptions, basic SDD tasks, refactor work)
 - **Intelligent reasoning** for each priority decision
+
+# ✅ **3.3 - CLI/MCP Integration for `--escalate` Flag**
+
+## 🎯 Implementation Summary
+
+Successfully implemented the **`--escalate` flag integration** across CLI and MCP interfaces, enabling users to apply priority escalation rules as an optional step during key workflows like `merge-tasks` and `process-docs`.
+
+## 📦 What Was Implemented
+
+### 🔧 1. CLI Layer Integration (`scripts/modules/commands.js`)
+
+**Added `--escalate` flag to:**
+- ✅ **`task-master merge-tasks`** - Apply priority escalation rules after merging tasks
+- ✅ **`task-master process-docs`** - Apply priority escalation rules after processing all documents
+
+**CLI Behavior:**
+- Escalation runs **after** main parsing/merge logic
+- Tasks are escalated **in-memory** before saving to file (unless `--dry-run`)
+- Enhanced verbose logging shows escalation details
+- Dry-run mode previews escalation changes
+
+### 🔄 2. Merge Integration Enhancement
+
+**Updated `mergeTasksInTag()` integration:**
+- ✅ CLI correctly passes `escalate` flag to merge options
+- ✅ Enhanced merge reporting shows escalation count
+- ✅ Verbose mode shows detailed escalation information with reasons
+- ✅ Context includes `tagName` for escalation
+
+### 📄 3. Document Processing Integration
+
+**Enhanced `processDocumentHierarchy()`:**
+- ✅ Added `escalate` parameter to function signature
+- ✅ Post-processing escalation logic after all documents are processed
+- ✅ Document metadata map creation for escalation context
+- ✅ Automatic task file updates with escalated priorities
+- ✅ Escalation count reporting and logging
+
+### 🌐 4. MCP Server Integration
+
+**Updated MCP Tools:**
+- ✅ **`merge_tasks`** tool - Added `escalate: boolean` to Zod schema
+- ✅ **`process_docs`** tool - Added `escalate: boolean` to schema
+- ✅ Both tools pass escalation flag through to core functions
+- ✅ MCP context includes session and logging for escalation
+
+**Updated Direct Functions:**
+- ✅ **`mergeTasksDirect()`** - Handles escalate parameter
+- ✅ **`processDocsDirect()`** - Passes escalate flag to orchestrator
+
+### 🔍 5. Enhanced Dry Run & Verbose Output
+
+**Dry Run Enhancements:**
+- ✅ Shows number of tasks that would be escalated
+- ✅ With `--verbose`: Shows per-task escalation details
+- ✅ Displays escalation reasons and priority changes
+
+**Verbose Logging Features:**
+- ✅ Merge command shows escalation count in summary
+- ✅ Detailed escalation section with task IDs, new priorities, and reasons
+- ✅ Process-docs shows escalation progress and results
+
+## 📋 Example CLI Usages
+
+### Basic merge with escalation
+```bash
+task-master merge-tasks --tag master --escalate
+```
+
+### Process multiple docs with dry-run + escalation + verbose
+```bash
+task-master process-docs --tag release-v2 --escalate --dry-run --verbose
+```
+
+### Merge with similarity threshold and escalation
+```bash
+task-master merge-tasks --similarity 0.9 --escalate --verbose
+```
+
+## 🔄 Integration Flow
+
+### CLI Flow:
+1. **User provides `--escalate` flag**
+2. **Flag passed to core function via options**
+3. **Core logic executes main operation (merge/parse)**
+4. **If escalate=true, priority escalation applied**
+5. **Results saved to file with escalated priorities**
+6. **CLI displays escalation summary and details**
+
+### MCP Flow:
+1. **MCP client provides `escalate: true` parameter**
+2. **Zod schema validates parameter**
+3. **Direct function receives escalate flag**
+4. **Core function applies escalation logic**
+5. **Results returned with escalation metadata**
+
+## 🧪 Key Features Delivered
+
+| Feature | CLI | MCP | Status |
+|---------|-----|-----|--------|
+| `--escalate` flag support | ✅ | ✅ | Complete |
+| Merge workflow integration | ✅ | ✅ | Complete |
+| Document processing integration | ✅ | ✅ | Complete |
+| Dry-run escalation preview | ✅ | ✅ | Complete |
+| Verbose escalation details | ✅ | ✅ | Complete |
+| Context propagation | ✅ | ✅ | Complete |
+
+## 📊 Technical Integration Points
+
+### Core Module Updates:
+- **`merge-tasks.js`** - Uses escalation in merge options
+- **`process-document-hierarchy.js`** - Post-processing escalation logic
+- **`escalate-priority.js`** - Core escalation engine (Task 3.2)
+
+### Schema Updates:
+- **MCP `merge_tasks` schema** - Added `escalate: boolean`
+- **MCP `process_docs` schema** - Added `escalate: boolean`
+- **CLI argument parsing** - Handles `--escalate` flag
+
+### Context Enhancement:
+- **Escalation context** includes tagName, documentMetadataMap, projectRoot
+- **Session propagation** for MCP workflows
+- **Logging integration** for both CLI and MCP
+
+## 🎯 Success Criteria - All Met ✅
+
+| Criteria | Status | Notes |
+|----------|--------|--------|
+| CLI flags added to relevant commands | ✅ | `merge-tasks` and `process-docs` |
+| Merge support with escalation | ✅ | Tasks escalated after merging |
+| Document flow support | ✅ | Escalation applies after parsing |
+| MCP integration | ✅ | `escalate` flag respected in API |
+| Dry-run output | ✅ | Escalation previewed without file write |
+| Verbose logging | ✅ | Shows task ID, old/new priority, reason |
+
+## 🔮 Future Enhancements
+
+The implementation provides a solid foundation for:
+- **Additional workflow integration** (expand, add-task, etc.)
+- **Escalation rule customization** via configuration
+- **Escalation analytics and reporting**
+- **Batch escalation operations**
+
+## 🚀 Ready for Production
+
+The `--escalate` flag integration is **complete and ready for use** across both CLI and MCP interfaces, providing users with flexible control over when and how priority escalation rules are applied to their tasks.

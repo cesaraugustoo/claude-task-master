@@ -1,7 +1,7 @@
 // scripts/modules/task-manager/process-document-hierarchy.js
 import fs from 'fs';
 import path from 'path';
-import { readJSON, log } from '../utils.js';
+import { readJSON, writeJSON, log } from '../utils.js';
 import parseDocumentAndGenerateTasks from './parse-prd.js'; // This will be the enhanced version
 import { getConfig } from '../config-manager.js';
 import { classifyDocument } from './utils/classify-document.js';
@@ -128,6 +128,7 @@ async function processDocumentHierarchy(options = {}) {
         force = false,
         append = false,
         research = false,
+        escalate = false,
         session,
         projectRoot: explicitProjectRoot
     } = options;
@@ -341,6 +342,61 @@ async function processDocumentHierarchy(options = {}) {
     }
 
     logFn.success(`Successfully processed all document sources for tag '${targetTag}'.`);
+    
+    // Apply priority escalation if requested
+    if (escalate && generatedTasksByTagForOutput[targetTag] && generatedTasksByTagForOutput[targetTag].length > 0) {
+        logFn.info(`Applying priority escalation rules to ${generatedTasksByTagForOutput[targetTag].length} tasks in tag '${targetTag}'...`);
+        
+        try {
+            // Import escalation functions
+            const { escalateAllTasks } = await import('./utils/escalate-priority.js');
+            
+            // Create document metadata map for escalation context
+            const documentMetadataMap = {};
+            documentSources.forEach(doc => {
+                documentMetadataMap[doc.id] = {
+                    type: doc.type,
+                    path: doc.path,
+                    parentId: doc.parentId
+                };
+            });
+            
+            // Prepare escalation context
+            const escalationContext = {
+                tagName: targetTag,
+                documentMetadataMap,
+                projectRoot
+            };
+            
+            // Apply escalation to all generated tasks
+            const escalatedTasks = escalateAllTasks(generatedTasksByTagForOutput[targetTag], escalationContext);
+            
+            // Update the tasks in the file
+            const finalTasksData = readJSON(tasksPath) || {};
+            if (!finalTasksData[targetTag]) {
+                finalTasksData[targetTag] = { tasks: [] };
+            }
+            finalTasksData[targetTag].tasks = escalatedTasks;
+            
+            // Write back to file
+            writeJSON(tasksPath, finalTasksData);
+            
+            // Count escalated tasks for reporting
+            const escalatedCount = escalatedTasks.filter(task => task.escalationReason).length;
+            if (escalatedCount > 0) {
+                logFn.success(`Priority escalation applied: ${escalatedCount} tasks had their priority adjusted.`);
+            } else {
+                logFn.info('Priority escalation completed: No tasks required priority adjustments.');
+            }
+            
+            // Update output to reflect escalated tasks
+            generatedTasksByTagForOutput[targetTag] = escalatedTasks;
+            
+        } catch (escalationError) {
+            logFn.warn(`Priority escalation failed: ${escalationError.message}. Tasks generated successfully without escalation.`);
+        }
+    }
+
     return {
         success: true,
         message: `All document sources processed for tag '${targetTag}'.`,

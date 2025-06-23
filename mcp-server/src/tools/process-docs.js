@@ -41,7 +41,12 @@ export function registerProcessDocsTool(server) {
 				.boolean()
 				.optional()
 				.default(false)
-				.describe('If true, enables the research model for potentially more informed task generation across all documents.')
+				.describe('If true, enables the research model for potentially more informed task generation across all documents.'),
+			escalate: z
+				.boolean()
+				.optional()
+				.default(false)
+				.describe('If true, applies priority escalation rules after processing all documents.')
 		}),
 		execute: withNormalizedProjectRoot(async (args, { log, session }) => {
 			try {

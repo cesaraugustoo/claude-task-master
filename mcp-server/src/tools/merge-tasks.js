@@ -12,6 +12,7 @@ export function registerMergeTasksTool(server) {
     tag: z.string().optional().describe('Specify which tag context to merge tasks in (defaults to current active tag)'),
     similarityThreshold: z.number().min(0).max(1).optional().describe('Set similarity threshold for semantic merging (0-1, default: 0.85)'),
     useLLM: z.boolean().optional().describe('Use LLM for borderline merge decisions (requires appropriate API key)'),
+    escalate: z.boolean().optional().describe('Apply priority escalation rules after merging tasks'),
     dryRun: z.boolean().optional().describe('Preview changes without making modifications to the tasks file'),
     outputFile: z.string().optional().describe('Save merged results to a different file (preserves original)'),
     file: z.string().optional().describe('Path to the tasks file (default: .taskmaster/tasks/tasks.json)')
@@ -40,6 +41,10 @@ export function registerMergeTasksTool(server) {
         useLLM: {
           type: 'boolean',
           description: 'Use LLM for borderline merge decisions (requires appropriate API key)'
+        },
+        escalate: {
+          type: 'boolean',
+          description: 'Apply priority escalation rules after merging tasks'
         },
         dryRun: {
           type: 'boolean',

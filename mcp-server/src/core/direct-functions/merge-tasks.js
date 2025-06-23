@@ -21,6 +21,7 @@ export async function mergeTasksDirect(args, log, context = {}) {
       tag,
       similarityThreshold = 0.85,
       useLLM = false,
+      escalate = false,
       dryRun = false,
       outputFile,
       file = '.taskmaster/tasks/tasks.json'
@@ -78,13 +79,15 @@ export async function mergeTasksDirect(args, log, context = {}) {
     const mergeOptions = {
       similarityThreshold: parseFloat(similarityThreshold),
       useLLM: Boolean(useLLM),
+      escalate: Boolean(escalate),
       preserveOriginalIds: true,
       context: {
         session,
         mcpLog,
         projectRoot,
         commandName: 'mcp_merge_tasks',
-        outputType: 'mcp'
+        outputType: 'mcp',
+        tagName: targetTag
       },
       outputFormat: 'json'
     };
