@@ -1,4 +1,5 @@
 import { generateTaskHash, createGroupingKey, normalizeTitle } from './utils/hash-task.js';
+import { escalateAfterMerge, getMaxPriority } from './utils/escalate-priority.js';
 import { generateObjectService } from '../ai-services-unified.js';
 import { displayAiUsageSummary } from '../ui.js';
 import fs from 'fs/promises';
@@ -173,22 +174,22 @@ export function mergeTasks(taskGroup, options = {}) {
   mergedTask.sourceDocumentId = Array.from(sourceDocumentIds);
   mergedTask.sourceDocumentType = Array.from(sourceDocumentTypes);
 
-  // Merge priority - take highest
-  const priorityOrder = { 'low': 1, 'medium': 2, 'high': 3 };
+  // Merge priority - take highest from existing merge logic
   let highestPriority = primaryTask.priority || 'medium';
   let priorityChanged = false;
 
   for (const task of otherTasks) {
     const taskPriority = task.priority || 'medium';
-    if (priorityOrder[taskPriority] > priorityOrder[highestPriority]) {
-      highestPriority = taskPriority;
+    const maxPriority = getMaxPriority(highestPriority, taskPriority);
+    if (maxPriority !== highestPriority) {
+      highestPriority = maxPriority;
       priorityChanged = true;
     }
   }
 
   mergedTask.priority = highestPriority;
 
-  // Log priority upgrade if it happened
+  // Log priority upgrade if it happened during merge
   if (priorityChanged) {
     const priorityNote = `Priority upgraded to '${highestPriority}' due to task merge.`;
     mergedTask.estimationNote = mergedTask.estimationNote 
@@ -244,6 +245,19 @@ export function mergeTasks(taskGroup, options = {}) {
 
   if (descriptions.length > 1) {
     mergedTask.description = descriptions.join(' | ');
+  }
+
+  // Apply priority escalation after merge if enabled
+  if (options.escalate) {
+    const escalatedTask = escalateAfterMerge(mergedTask, options.context);
+    if (escalatedTask.priority !== mergedTask.priority) {
+      // Log escalation in addition to any merge priority changes
+      const escalationNote = `Priority escalated to '${escalatedTask.priority}' after merge (${escalatedTask.escalationReason})`;
+      escalatedTask.estimationNote = escalatedTask.estimationNote 
+        ? `${escalatedTask.estimationNote}; ${escalationNote}`
+        : escalationNote;
+    }
+    return escalatedTask;
   }
 
   return mergedTask;

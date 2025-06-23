@@ -29,6 +29,7 @@ import { performResearch } from './task-manager/research.js';
 import { readComplexityReport } from './utils.js';
 import processDocumentHierarchy from './task-manager/process-document-hierarchy.js';
 import { mergeTasksInTag } from './task-manager/merge-tasks.js';
+import { escalateTaskPriority, escalateAllTasks } from './task-manager/utils/escalate-priority.js';
 // Export task manager functions
 export {
 	parseDocumentAndGenerateTasks,
@@ -56,5 +57,7 @@ export {
 	migrateProject,
 	performResearch,
 	processDocumentHierarchy,
-	mergeTasksInTag
+	mergeTasksInTag,
+	escalateTaskPriority,
+	escalateAllTasks
 };

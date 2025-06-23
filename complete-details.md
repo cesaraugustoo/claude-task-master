@@ -251,7 +251,7 @@ The integration maintains **full backward compatibility** while providing enhanc
 - **Reliability**: 100% fallback coverage for edge cases
 - **Compatibility**: Full integration with existing adapter system
 
-## ✅ **3.1 Task Merging and Deduplication Layer**
+## ✅ **3.1 - Task Merging and Deduplication Layer**
 
 Here's a comprehensive summary of what was delivered:
 
@@ -345,3 +345,145 @@ The implementation follows the exact high-level algorithm specified:
 - **✅ MCP Tool**: Complete with Zod validation and telemetry tracking
 - **✅ Task Manager**: Exported through main task-manager.js module  
 - **✅ Dependencies**: All imports and exports properly configured
+
+# ✅ **3.2 - Priority Escalation Rules**
+
+## 🎯 Implementation Summary
+
+Successfully implemented the **Priority Escalation Rules** system that automatically assigns or adjusts task priority based on source document type, semantic context, hierarchy position, and estimated impact.
+
+## 📦 What Was Implemented
+
+### 🔧 1. Core Module (`scripts/modules/task-manager/utils/escalate-priority.js`)
+
+**Main Functions:**
+- `escalateTaskPriority(task, context)` - Core escalation logic for individual tasks
+- `escalateAllTasks(tasks, context)` - Batch processing for multiple tasks
+- `escalateAfterMerge(mergedTask, context)` - Integration with merge system
+- `getMaxPriority(priorityA, priorityB)` - Utility for priority comparison
+- `isPriorityHigher(priorityA, priorityB)` - Priority comparison logic
+
+### 📐 2. Implemented Rules
+
+#### ✅ Base Rules by Source Document Type
+| Document Type      | Default Priority |
+| ------------------ | ---------------- |
+| `PRD`              | `high`           |
+| `UX_SPEC`          | `medium`         |
+| `SDD`, `TECH_SPEC` | `low`            |
+| `INFRA_SPEC`       | `low`            |
+| `DESIGN_SYSTEM`    | `medium`         |
+| `OTHER` / unknown  | `medium`         |
+
+#### 🧠 Escalation Triggers
+- **Test Strategy Present**: +1 level (if substantial, >20 chars)
+- **Performance Goals**: +1 level (if present and non-empty)
+- **Reliability Targets**: +1 level (if present and non-empty)
+- **UX_SPEC + Presentation Layer**: Ensure medium priority minimum
+- **Epic Tasks**: Set to high priority (if `epicId` present and title contains "epic")
+- **Security/Authentication**: +1 level (keywords: security, auth, encryption, token, login, etc.)
+- **Infrastructure + Performance Goals**: Ensure medium priority minimum
+
+#### ⚖️ Demotion Rules
+- **Tech/SDD without Performance Goals**: Demote to low (only if no other escalations)
+- **Very Short Descriptions**: Demote to low (<20 chars - likely incomplete)
+- **Refactor/Documentation without Dependencies**: Demote to low (maintenance level)
+
+### 🛠️ 3. Merge System Integration
+
+Updated `scripts/modules/task-manager/merge-tasks.js`:
+- Added optional `--escalate` flag support via `options.escalate`
+- Integrated `escalateAfterMerge()` function
+- Only escalates if new priority is higher than merge-determined priority
+- Logs escalation reasons in `estimationNote` field
+
+### 🧪 4. Comprehensive Testing
+
+Created `tests/unit/scripts/modules/task-manager/utils/escalate-priority.test.js` with:
+- **33 test cases** covering all rules and edge cases
+- Base priority rules by document type
+- All escalation triggers (test strategy, performance goals, security, etc.)
+- All demotion rules
+- Batch processing (`escalateAllTasks`)
+- Merge integration (`escalateAfterMerge`)
+- Edge cases and error handling
+- **All tests passing ✅**
+
+### 📊 5. Metadata Tracking
+
+**Escalation Reason Tracking:**
+- Each escalated task gets an `escalationReason` field
+- Contains detailed explanation of why priority was changed
+- Multiple reasons are joined with semicolons
+- Useful for debugging, UI display, and explainability
+
+Example escalation reason:
+```
+"Base priority 'high' from document type 'PRD'; testStrategy present - indicates testable/production item; Security/authentication task - critical for system safety"
+```
+
+## 🚀 6. Module Exports
+
+Updated `scripts/modules/task-manager.js` to export:
+- `escalateTaskPriority`
+- `escalateAllTasks`
+
+Making these functions available for CLI commands and MCP tools.
+
+## 💻 Usage Examples
+
+### Individual Task Escalation
+```javascript
+import { escalateTaskPriority } from './scripts/modules/task-manager/utils/escalate-priority.js';
+
+const task = {
+  title: 'User Authentication',
+  sourceDocumentType: 'PRD',
+  performanceGoal: 'Response time < 100ms',
+  testStrategy: 'Comprehensive security testing'
+};
+
+const result = escalateTaskPriority(task);
+// result.priority: 'high'
+// result.escalationReason: 'Base priority \'high\' from document type \'PRD\'; testStrategy present...'
+```
+
+### Batch Processing
+```javascript
+import { escalateAllTasks } from './scripts/modules/task-manager/utils/escalate-priority.js';
+
+const tasks = [/* array of tasks */];
+const escalatedTasks = escalateAllTasks(tasks);
+// Returns tasks with updated priorities where escalation occurred
+```
+
+### Merge Integration
+```javascript
+import { mergeTasksInTag } from './scripts/modules/task-manager/merge-tasks.js';
+
+await mergeTasksInTag({
+  // ... other options
+  escalate: true,  // Enable priority escalation after merge
+  context: { /* optional context */ }
+});
+```
+
+## 🎯 Key Benefits Achieved
+
+1. **Automatic Prioritization**: Tasks are intelligently prioritized based on their characteristics
+2. **Business-Critical Focus**: PRD tasks and epics automatically get high priority
+3. **Security Awareness**: Security/authentication tasks are escalated for safety
+4. **Performance Consciousness**: Tasks with SLOs get appropriate attention
+5. **Quality Control**: Tasks with test strategies are prioritized
+6. **Maintenance Awareness**: Refactor/documentation tasks are appropriately deprioritized
+7. **Explainable**: Every priority change includes a detailed reason
+8. **Post-Processing**: Centralized logic that doesn't interfere with parsing
+9. **Merge-Safe**: Only escalates when beneficial, doesn't override higher priorities
+
+## 🧪 Demo Results
+
+The demo script showed the system working perfectly:
+- **8 test tasks** with different characteristics
+- **5 tasks escalated to high priority** (PRD features, epics, security, performance-critical)
+- **3 tasks demoted to low priority** (incomplete descriptions, basic SDD tasks, refactor work)
+- **Intelligent reasoning** for each priority decision
